@@ -1,0 +1,578 @@
+{
+  "settings": {
+    "orgName": "TUNKA HISOB",
+    "phone": "",
+    "address": "",
+    "dollarRate": 12500,
+    "minStock": 100,
+    "servicePrice": 2000,
+    "timezone": "Asia/Samarkand",
+    "receiptFooter": "Rahmat!",
+    "processingPercent": 2,
+    "kallakPrice": 15000
+  },
+  "users": [
+    {
+      "id": "USR-00001",
+      "role": "admin",
+      "telegramId": 1508028334,
+      "name": "ADMIN",
+      "active": true
+    },
+    {
+      "id": "USR-00002",
+      "role": "worker",
+      "telegramId": 1508028334,
+      "name": "Usta",
+      "active": true
+    }
+  ],
+  "customers": [
+    {
+      "id": "CUST-00001",
+      "name": "Azim",
+      "phone": "+900798795454",
+      "note": "_",
+      "telegramId": null,
+      "createdAt": "2026-10-11 10:43:19",
+      "status": "active"
+    },
+    {
+      "id": "CUST-00002",
+      "name": "Abdulqtif",
+      "phone": "+998901234567",
+      "note": "Ok",
+      "telegramId": null,
+      "createdAt": "2026-10-11 12:06:02",
+      "status": "active"
+    }
+  ],
+  "products": [
+    {
+      "id": "PROD-00001",
+      "name": "tmz",
+      "type": "0.4",
+      "color": "oq matviy",
+      "unitPrice": 65000,
+      "minStock": 100,
+      "status": "active",
+      "createdAt": "2026-10-11 10:43:59",
+      "note": ""
+    }
+  ],
+  "saleMenuProducts": [],
+  "stock": [
+    {
+      "productId": "PROD-00001",
+      "quantity": 870
+    },
+    {
+      "productId": "PROD-00002",
+      "quantity": 4000
+    },
+    {
+      "productId": "PROD-00003",
+      "quantity": 4000
+    }
+  ],
+  "stockMovements": [
+    {
+      "id": "STMV-00001",
+      "productId": "PROD-00001",
+      "type": "in",
+      "quantity": 1000,
+      "rollId": "ROLL-00001",
+      "note": "Boshlang'ich kirim",
+      "userId": "USR-00001",
+      "date": "2026-10-11 10:43:59"
+    },
+    {
+      "id": "STMV-00002",
+      "productId": "PROD-00001",
+      "type": "out",
+      "quantity": 30,
+      "rollId": "",
+      "note": "Sotuv: SALE-00003",
+      "userId": "USR-00001",
+      "date": "2026-10-11 10:56:31"
+    },
+    {
+      "id": "STMV-00003",
+      "productId": "PROD-00001",
+      "type": "out",
+      "quantity": 100,
+      "rollId": "",
+      "note": "Sotuv: SALE-00004",
+      "userId": "USR-00001",
+      "date": "2026-10-11 11:53:37",
+      "unit": "metr",
+      "category": "TUNKA",
+      "quantityBefore": 970,
+      "quantityAfter": 870,
+      "rollAllocations": [
+        {
+          "rollId": "ROLL-00001",
+          "quantity": 100
+        }
+      ],
+      "saleId": "SALE-00004"
+    },
+    {
+      "id": "STMV-00004",
+      "productId": "PROD-00002",
+      "type": "in",
+      "quantity": 4000,
+      "rollId": "ROLL-00002",
+      "note": "Boshlang'ich kirim",
+      "userId": "USR-00001",
+      "date": "2026-10-11 12:05:39",
+      "unit": "metr",
+      "category": "REKA",
+      "unitPrice": 3500,
+      "totalValue": 14000000,
+      "batchNumber": "",
+      "quantityBefore": 0,
+      "quantityAfter": 4000
+    },
+    {
+      "id": "STMV-00005",
+      "productId": "PROD-00003",
+      "type": "in",
+      "quantity": 4000,
+      "rollId": "ROLL-00003",
+      "note": "Boshlang'ich kirim",
+      "userId": "USR-00001",
+      "date": "2026-10-11 12:07:09",
+      "unit": "metr",
+      "category": "REKA",
+      "unitPrice": 3500,
+      "totalValue": 14000000,
+      "batchNumber": "",
+      "quantityBefore": 0,
+      "quantityAfter": 4000
+    }
+  ],
+  "rolls": [
+    {
+      "id": "ROLL-00001",
+      "productId": "PROD-00001",
+      "rollNumber": "001",
+      "quantity": 1000,
+      "remaining": 870,
+      "unitPrice": 65000,
+      "date": "2026-10-11 10:43:59",
+      "note": "Boshlang'ich kirim"
+    },
+    {
+      "id": "ROLL-00002",
+      "productId": "PROD-00002",
+      "rollNumber": "001",
+      "quantity": 4000,
+      "remaining": 4000,
+      "unitPrice": 3500,
+      "date": "2026-10-11 12:05:39",
+      "note": "Boshlang'ich kirim"
+    },
+    {
+      "id": "ROLL-00003",
+      "productId": "PROD-00003",
+      "rollNumber": "001",
+      "quantity": 4000,
+      "remaining": 4000,
+      "unitPrice": 3500,
+      "date": "2026-10-11 12:07:09",
+      "note": "Boshlang'ich kirim"
+    }
+  ],
+  "sales": [
+    {
+      "id": "SALE-00001",
+      "customerId": "CUST-00001",
+      "productId": null,
+      "items": [
+        {
+          "category": "REKA",
+          "productId": null,
+          "productName": "REKA",
+          "productType": "",
+          "quantity": 10,
+          "unit": "metr",
+          "baseUnitPrice": 3500,
+          "serviceFeeSom": 0,
+          "unitPrice": 3500,
+          "total": 35000,
+          "processingApplied": false
+        },
+        {
+          "category": "LATOK",
+          "productId": null,
+          "productName": "LATOK",
+          "productType": "",
+          "quantity": 100,
+          "unit": "metr",
+          "baseUnitPrice": 24000,
+          "serviceFeeSom": 0,
+          "unitPrice": 24000,
+          "total": 2400000,
+          "processingApplied": false
+        },
+        {
+          "category": "USLUGA",
+          "productId": null,
+          "productName": "Usluga (mijoz materiali)",
+          "productType": "",
+          "quantity": 100,
+          "unit": "metr",
+          "baseUnitPrice": 2000,
+          "serviceFeeSom": 0,
+          "unitPrice": 2000,
+          "total": 200000,
+          "processingApplied": false
+        }
+      ],
+      "quantity": 210,
+      "unitPrice": 3500,
+      "total": 2635000,
+      "paid": 2635000,
+      "debt": 0,
+      "paymentType": "cash",
+      "mixedPayments": null,
+      "exchangeRate": 12500,
+      "usdAmount": 210.8,
+      "userId": "USR-00001",
+      "date": "2026-10-11 10:45:30",
+      "status": "active",
+      "cancelledBy": null,
+      "cancelledAt": null,
+      "cancelReason": null
+    },
+    {
+      "id": "SALE-00002",
+      "customerId": "CUST-00001",
+      "productId": null,
+      "items": [
+        {
+          "category": "KALLAK",
+          "productId": null,
+          "productName": "KALLAK",
+          "productType": "",
+          "quantity": 20,
+          "unit": "dona",
+          "baseUnitPrice": 15000,
+          "serviceFeeSom": 0,
+          "unitPrice": 15000,
+          "total": 300000,
+          "processingApplied": false
+        }
+      ],
+      "quantity": 0,
+      "unitPrice": 15000,
+      "total": 300000,
+      "paid": 300000,
+      "debt": 0,
+      "paymentType": "card",
+      "mixedPayments": null,
+      "exchangeRate": 12500,
+      "usdAmount": 24,
+      "userId": "USR-00001",
+      "date": "2026-10-11 10:55:08",
+      "status": "active",
+      "cancelledBy": null,
+      "cancelledAt": null,
+      "cancelReason": null
+    },
+    {
+      "id": "SALE-00003",
+      "customerId": "CUST-00001",
+      "productId": "PROD-00001",
+      "items": [
+        {
+          "category": "TUNKA",
+          "productId": "PROD-00001",
+          "productName": "tmz",
+          "productType": "0.4",
+          "quantity": 30,
+          "unit": "metr",
+          "baseUnitPrice": 65000,
+          "serviceFeeSom": 0,
+          "unitPrice": 65000,
+          "total": 1950000,
+          "processingApplied": false
+        }
+      ],
+      "quantity": 30,
+      "unitPrice": 65000,
+      "total": 1950000,
+      "paid": 0,
+      "debt": 1950000,
+      "paymentType": "debt",
+      "mixedPayments": null,
+      "exchangeRate": 12500,
+      "usdAmount": 156,
+      "userId": "USR-00001",
+      "date": "2026-10-11 10:56:31",
+      "status": "active",
+      "cancelledBy": null,
+      "cancelledAt": null,
+      "cancelReason": null
+    },
+    {
+      "id": "SALE-00004",
+      "customerId": "CUST-00001",
+      "productId": "PROD-00001",
+      "items": [
+        {
+          "category": "TUNKA",
+          "productId": "PROD-00001",
+          "productName": "tmz",
+          "productType": "0.4",
+          "quantity": 30,
+          "unit": "metr",
+          "baseUnitPrice": 65000,
+          "serviceFeeSom": 0,
+          "unitPrice": 65000,
+          "total": 1950000,
+          "processingApplied": false
+        },
+        {
+          "category": "REKA",
+          "productId": "PROD-00001",
+          "productName": "tmz",
+          "productType": "0.4",
+          "quantity": 30,
+          "unit": "metr",
+          "baseUnitPrice": 65000,
+          "serviceFeeSom": 0,
+          "unitPrice": 65000,
+          "total": 1950000,
+          "processingApplied": false
+        },
+        {
+          "category": "USLUGA",
+          "productId": "PROD-00001",
+          "productName": "tmz",
+          "productType": "0.4",
+          "quantity": 20,
+          "unit": "metr",
+          "baseUnitPrice": 65000,
+          "serviceFeeSom": 0,
+          "unitPrice": 65000,
+          "total": 1300000,
+          "processingApplied": false
+        },
+        {
+          "category": "LATOK",
+          "productId": "PROD-00001",
+          "productName": "tmz",
+          "productType": "0.4",
+          "quantity": 20,
+          "unit": "metr",
+          "baseUnitPrice": 65000,
+          "serviceFeeSom": 0,
+          "unitPrice": 65000,
+          "total": 1300000,
+          "processingApplied": false
+        }
+      ],
+      "quantity": 100,
+      "unitPrice": 65000,
+      "total": 6500000,
+      "paid": 0,
+      "debt": 6500000,
+      "paymentType": "debt",
+      "mixedPayments": null,
+      "exchangeRate": 12500,
+      "usdAmount": 520,
+      "userId": "USR-00001",
+      "date": "2026-10-11 11:53:37",
+      "status": "active",
+      "cancelledBy": null,
+      "cancelledAt": null,
+      "cancelReason": null
+    }
+  ],
+  "payments": [
+    {
+      "id": "PAY-00001",
+      "customerId": "CUST-00001",
+      "saleId": "SALE-00001",
+      "amount": 2635000,
+      "prevDebt": 0,
+      "remaining": 0,
+      "method": "cash",
+      "userId": "USR-00001",
+      "date": "2026-10-11 10:45:30"
+    },
+    {
+      "id": "PAY-00002",
+      "customerId": "CUST-00001",
+      "saleId": "SALE-00002",
+      "amount": 300000,
+      "prevDebt": 0,
+      "remaining": 0,
+      "method": "card",
+      "userId": "USR-00001",
+      "date": "2026-10-11 10:55:08"
+    }
+  ],
+  "debts": [
+    {
+      "id": "DEBT-00001",
+      "customerId": "CUST-00001",
+      "saleId": "SALE-00003",
+      "amount": 1950000,
+      "reason": "Sotuv: SALE-00003",
+      "userId": "USR-00001",
+      "date": "2026-10-11 10:56:31",
+      "status": "active"
+    },
+    {
+      "id": "DEBT-00002",
+      "customerId": "CUST-00001",
+      "saleId": "SALE-00004",
+      "amount": 6500000,
+      "reason": "Sotuv: SALE-00004",
+      "userId": "USR-00001",
+      "date": "2026-10-11 11:53:37",
+      "status": "active"
+    }
+  ],
+  "income": [
+    {
+      "id": "INC-00001",
+      "source": "Naqd sotuv",
+      "customerId": "CUST-00001",
+      "amount": 2635000,
+      "note": "Sotuv: SALE-00001",
+      "userId": "USR-00001",
+      "date": "2026-10-11 10:45:30"
+    },
+    {
+      "id": "INC-00002",
+      "source": "Karta sotuv",
+      "customerId": "CUST-00001",
+      "amount": 300000,
+      "note": "Sotuv: SALE-00002",
+      "userId": "USR-00001",
+      "date": "2026-10-11 10:55:08"
+    }
+  ],
+  "expenses": [],
+  "auditLogs": [
+    {
+      "id": "AUD-00001",
+      "userId": "USR-00001",
+      "action": "Yangi mijoz",
+      "object": "CUST-00001",
+      "prevValue": "",
+      "newValue": "Azim",
+      "date": "2026-10-11 10:43:19"
+    },
+    {
+      "id": "AUD-00002",
+      "userId": "USR-00001",
+      "action": "Yangi mahsulot",
+      "object": "PROD-00001",
+      "prevValue": "",
+      "newValue": "tmz 0.4",
+      "date": "2026-10-11 10:43:59"
+    },
+    {
+      "id": "AUD-00003",
+      "userId": "USR-00001",
+      "action": "Sotuv yaratildi",
+      "object": "SALE-00001",
+      "prevValue": "",
+      "newValue": "2 635 000 so'm - Azim - REKA 10 metr, LATOK 100 metr, Usluga (mijoz materiali) 100 metr",
+      "date": "2026-10-11 10:45:30"
+    },
+    {
+      "id": "AUD-00004",
+      "userId": "USR-00001",
+      "action": "Kallak narxi o'zgartirildi",
+      "object": "settings",
+      "prevValue": "",
+      "newValue": "15000",
+      "date": "2026-10-11 10:54:47"
+    },
+    {
+      "id": "AUD-00005",
+      "userId": "USR-00001",
+      "action": "Sotuv yaratildi",
+      "object": "SALE-00002",
+      "prevValue": "",
+      "newValue": "300 000 so'm - Azim - KALLAK 20 dona",
+      "date": "2026-10-11 10:55:08"
+    },
+    {
+      "id": "AUD-00006",
+      "userId": "USR-00001",
+      "action": "Sotuv yaratildi",
+      "object": "SALE-00003",
+      "prevValue": "",
+      "newValue": "1 950 000 so'm - Azim - tmz 30 metr",
+      "date": "2026-10-11 10:56:31"
+    },
+    {
+      "id": "AUD-00007",
+      "userId": "USR-00001",
+      "action": "Ishchi qo'shildi",
+      "object": "USR-00002",
+      "prevValue": "",
+      "newValue": "Usta",
+      "date": "2026-10-11 11:50:40"
+    },
+    {
+      "id": "AUD-00008",
+      "userId": "USR-00001",
+      "action": "Sotuv yaratildi",
+      "object": "SALE-00004",
+      "prevValue": "",
+      "newValue": "6 500 000 so'm - Azim - tmz, tmz, tmz, tmz",
+      "date": "2026-10-11 11:53:37"
+    },
+    {
+      "id": "AUD-00009",
+      "userId": "USR-00001",
+      "action": "Yangi mahsulot",
+      "object": "PROD-00002",
+      "prevValue": "",
+      "newValue": "REKA — Reka 2/4",
+      "date": "2026-10-11 12:05:39"
+    },
+    {
+      "id": "AUD-00010",
+      "userId": "USR-00001",
+      "action": "Yangi mijoz",
+      "object": "CUST-00002",
+      "prevValue": "",
+      "newValue": "Abdulqtif",
+      "date": "2026-10-11 12:06:02"
+    },
+    {
+      "id": "AUD-00011",
+      "userId": "USR-00001",
+      "action": "Yangi mahsulot",
+      "object": "PROD-00003",
+      "prevValue": "",
+      "newValue": "REKA — Reka 2/4",
+      "date": "2026-10-11 12:07:09"
+    }
+  ],
+  "notifications": [],
+  "backups": [],
+  "counters": {
+    "user": 2,
+    "customer": 2,
+    "product": 3,
+    "roll": 3,
+    "sale": 4,
+    "debt": 2,
+    "payment": 2,
+    "expense": 0,
+    "income": 2,
+    "stockMovement": 5,
+    "audit": 11,
+    "backup": 0
+  }
+}

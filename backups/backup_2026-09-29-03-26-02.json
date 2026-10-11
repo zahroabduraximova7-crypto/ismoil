@@ -1,0 +1,224 @@
+{
+  "settings": {
+    "orgName": "TUNKA HISOB",
+    "phone": "",
+    "address": "",
+    "dollarRate": 12500,
+    "minStock": 100,
+    "processingPercent": 2,
+    "timezone": "Asia/Samarkand",
+    "receiptFooter": "Rahmat!"
+  },
+  "users": [
+    {
+      "id": "USR-00001",
+      "role": "admin",
+      "telegramId": 5059260977,
+      "name": "ADMIN",
+      "active": true
+    }
+  ],
+  "customers": [
+    {
+      "id": "CUST-00001",
+      "name": "ali",
+      "phone": "+998901234567",
+      "note": "klent",
+      "telegramId": null,
+      "createdAt": "2026-09-28 06:50:11",
+      "status": "active"
+    }
+  ],
+  "products": [
+    {
+      "id": "PROD-00001",
+      "name": "tmz",
+      "type": "0.40",
+      "color": "oq matviy",
+      "unitPrice": 65000,
+      "minStock": 30,
+      "status": "active",
+      "createdAt": "2026-09-28 06:48:54",
+      "note": "yoq"
+    },
+    {
+      "id": "PROD-00002",
+      "name": "smz",
+      "type": "0.4",
+      "color": "qora matziy",
+      "unitPrice": 68000,
+      "minStock": 40,
+      "status": "active",
+      "createdAt": "2026-09-28 06:49:43",
+      "note": "zor"
+    }
+  ],
+  "stock": [
+    {
+      "productId": "PROD-00001",
+      "quantity": 1000
+    },
+    {
+      "productId": "PROD-00002",
+      "quantity": 200
+    }
+  ],
+  "stockMovements": [
+    {
+      "id": "STMV-00001",
+      "productId": "PROD-00001",
+      "type": "in",
+      "quantity": 1000,
+      "rollId": "ROLL-00001",
+      "note": "Boshlang'ich kirim",
+      "userId": "USR-00001",
+      "date": "2026-09-28 06:48:54"
+    },
+    {
+      "id": "STMV-00002",
+      "productId": "PROD-00002",
+      "type": "in",
+      "quantity": 500,
+      "rollId": "ROLL-00002",
+      "note": "Boshlang'ich kirim",
+      "userId": "USR-00001",
+      "date": "2026-09-28 06:49:43"
+    },
+    {
+      "id": "STMV-00003",
+      "productId": "PROD-00002",
+      "type": "out",
+      "quantity": 300,
+      "rollId": "",
+      "note": "Sotuv: SALE-00001",
+      "userId": "USR-00001",
+      "date": "2026-09-28 06:51:13"
+    }
+  ],
+  "rolls": [
+    {
+      "id": "ROLL-00001",
+      "productId": "PROD-00001",
+      "rollNumber": "001",
+      "quantity": 1000,
+      "remaining": 1000,
+      "unitPrice": 65000,
+      "date": "2026-09-28 06:48:54",
+      "note": "Boshlang'ich kirim"
+    },
+    {
+      "id": "ROLL-00002",
+      "productId": "PROD-00002",
+      "rollNumber": "001",
+      "quantity": 500,
+      "remaining": 500,
+      "unitPrice": 68000,
+      "date": "2026-09-28 06:49:43",
+      "note": "Boshlang'ich kirim"
+    }
+  ],
+  "sales": [
+    {
+      "id": "SALE-00001",
+      "customerId": "CUST-00001",
+      "productId": "PROD-00002",
+      "quantity": 300,
+      "unitPrice": 68000,
+      "processingApplied": false,
+      "processingPercent": 2,
+      "total": 20400000,
+      "paid": 20400000,
+      "debt": 0,
+      "paymentType": "cash",
+      "mixedPayments": null,
+      "exchangeRate": 12500,
+      "usdAmount": 1632,
+      "userId": "USR-00001",
+      "date": "2026-09-28 06:51:13",
+      "status": "active",
+      "cancelledBy": null,
+      "cancelledAt": null,
+      "cancelReason": null
+    }
+  ],
+  "payments": [
+    {
+      "id": "PAY-00001",
+      "customerId": "CUST-00001",
+      "saleId": "SALE-00001",
+      "amount": 20400000,
+      "prevDebt": 0,
+      "remaining": 0,
+      "method": "cash",
+      "userId": "USR-00001",
+      "date": "2026-09-28 06:51:13"
+    }
+  ],
+  "debts": [],
+  "income": [
+    {
+      "id": "INC-00001",
+      "source": "Naqd sotuv",
+      "customerId": "CUST-00001",
+      "amount": 20400000,
+      "note": "Sotuv: SALE-00001",
+      "userId": "USR-00001",
+      "date": "2026-09-28 06:51:13"
+    }
+  ],
+  "expenses": [],
+  "auditLogs": [
+    {
+      "id": "AUD-00001",
+      "userId": "USR-00001",
+      "action": "Yangi mahsulot",
+      "object": "PROD-00001",
+      "prevValue": "",
+      "newValue": "tmz 0.40",
+      "date": "2026-09-28 06:48:54"
+    },
+    {
+      "id": "AUD-00002",
+      "userId": "USR-00001",
+      "action": "Yangi mahsulot",
+      "object": "PROD-00002",
+      "prevValue": "",
+      "newValue": "smz 0.4",
+      "date": "2026-09-28 06:49:43"
+    },
+    {
+      "id": "AUD-00003",
+      "userId": "USR-00001",
+      "action": "Yangi mijoz",
+      "object": "CUST-00001",
+      "prevValue": "",
+      "newValue": "ali",
+      "date": "2026-09-28 06:50:11"
+    },
+    {
+      "id": "AUD-00004",
+      "userId": "USR-00001",
+      "action": "Sotuv yaratildi",
+      "object": "SALE-00001",
+      "prevValue": "",
+      "newValue": "20 400 000 so'm - ali - smz 0.4",
+      "date": "2026-09-28 06:51:13"
+    }
+  ],
+  "notifications": [],
+  "backups": [],
+  "counters": {
+    "user": 1,
+    "customer": 1,
+    "product": 2,
+    "roll": 2,
+    "sale": 1,
+    "debt": 0,
+    "payment": 1,
+    "expense": 0,
+    "income": 1,
+    "stockMovement": 3,
+    "audit": 4,
+    "backup": 0
+  }
+}

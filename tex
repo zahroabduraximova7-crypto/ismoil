@@ -1,0 +1,2655 @@
+// // index.js — TUNKA HISOB BOTI: Professional Telegram ERP tizimi
+// // Node.js + Telegraf + Luxon + PDFKit
+
+// require('dotenv').config();
+// const { Telegraf, Markup, session } = require('telegraf');
+// const fs = require('fs');
+// const path = require('path');
+
+// const {
+//   nowStr, todayStr, monthStr,
+//   prettyDateTime, prettyDate, prettyMonth,
+//   fmtNum, fmtSom, fmtUsd,
+//   isPositiveNumber, isNonNegativeNumber, isPositiveInt, isNonEmptyStr,
+//   genId,
+// } = require('./utils');
+
+// const {
+//   loadData, atomicSave, createBackup, listBackups, readBackupFile,
+// } = require('./store');
+
+// const {
+//   generateReceipt, generateDailyReport, generateMonthlyReport,
+// } = require('./pdf');
+
+// // ============================================================
+// // SOZLAMALAR
+// // ============================================================
+
+// const BOT_TOKEN = process.env.BOT_TOKEN;
+// const ADMIN_ID = parseInt(process.env.ADMIN_ID, 10);
+// const PRIVATE_GROUP_ID = process.env.PRIVATE_GROUP_ID ? parseInt(process.env.PRIVATE_GROUP_ID, 10) : null;
+
+// if (!BOT_TOKEN || !ADMIN_ID) {
+//   console.error('❌ BOT_TOKEN va ADMIN_ID .env faylda bo\'lishi shart!');
+//   process.exit(1);
+// }
+
+// const bot = new Telegraf(BOT_TOKEN);
+
+// // ============================================================
+// // MA'LUMOTLAR BAZASI (global)
+// // ============================================================
+
+// let DB = loadData();
+
+// function save() {
+//   atomicSave(DB);
+// }
+
+// // ID generator
+// function nextId(prefix) {
+//   const key = prefix.toLowerCase();
+//   const keyMap = {
+//     'USR': 'user', 'CUST': 'customer', 'PROD': 'product', 'ROLL': 'roll',
+//     'SALE': 'sale', 'DEBT': 'debt', 'PAY': 'payment', 'EXP': 'expense',
+//     'INC': 'income', 'STMV': 'stockMovement', 'AUD': 'audit', 'BKP': 'backup',
+//   };
+//   const counterKey = keyMap[prefix] || key;
+//   DB.counters[counterKey] = (DB.counters[counterKey] || 0) + 1;
+//   return genId(prefix, DB.counters[counterKey]);
+// }
+
+// // ============================================================
+// // FOYDALANUVCHI ANIQLASH
+// // ============================================================
+
+// function getUserByTelegramId(telegramId) {
+//   return DB.users.find(u => u.telegramId === telegramId && u.active);
+// }
+
+// function isAuthorized(ctx) {
+//   const tid = ctx.from?.id;
+//   if (!tid) return false;
+//   if (tid === ADMIN_ID) return true;
+//   return DB.users.some(u => u.telegramId === tid && u.active && u.role === 'worker');
+// }
+
+// function getUser(ctx) {
+//   const tid = ctx.from?.id;
+//   if (tid === ADMIN_ID) {
+//     // Admin har doim mavjud
+//     let admin = DB.users.find(u => u.role === 'admin');
+//     if (!admin) {
+//       admin = {
+//         id: 'USR-00001',
+//         role: 'admin',
+//         telegramId: tid,
+//         name: 'ADMIN',
+//         active: true,
+//       };
+//       DB.users.push(admin);
+//       save();
+//     }
+//     return admin;
+//   }
+//   return getUserByTelegramId(tid);
+// }
+
+// function isAdmin(ctx) {
+//   return ctx.from?.id === ADMIN_ID;
+// }
+
+// // ============================================================
+// // AUDIT LOG
+// // ============================================================
+
+// function auditLog(userId, action, object, prevValue, newValue) {
+//   DB.auditLogs.push({
+//     id: nextId('AUD'),
+//     userId,
+//     action,
+//     object,
+//     prevValue: prevValue ? String(prevValue) : '',
+//     newValue: newValue ? String(newValue) : '',
+//     date: nowStr(),
+//   });
+// }
+
+// // ============================================================
+// // MAXFIY GURUHGA YUBORISH
+// // ============================================================
+
+// async function sendToGroup(text) {
+//   if (!PRIVATE_GROUP_ID) return;
+//   try {
+//     await bot.telegram.sendMessage(PRIVATE_GROUP_ID, text);
+//   } catch (e) {
+//     console.error('Guruhga yuborishda xatolik:', e.message);
+//   }
+// }
+
+// // ============================================================
+// // KAM QOLDIQ OGOHLANTIRISH
+// // ============================================================
+
+// function checkLowStock(productId) {
+//   const product = DB.products.find(p => p.id === productId);
+//   if (!product || product.status === 'archived') return;
+//   const stock = DB.stock.find(s => s.productId === productId);
+//   const qty = stock ? stock.quantity : 0;
+//   if (qty <= product.minStock) {
+//     const msg = `⚠️ TUNKA KAM QOLDI\n\n${product.name} ${product.type}\n\nQoldiq: ${fmtNum(qty)} metr\nMinimal qoldiq: ${fmtNum(product.minStock)} metr`;
+//     sendToGroup(msg);
+//     // Admin ga ham yuborish
+//     try {
+//       bot.telegram.sendMessage(ADMIN_ID, msg);
+//     } catch {}
+//   }
+// }
+
+// // ============================================================
+// // OMBOR OPERATSIYALARI
+// // ============================================================
+
+// function getStockQuantity(productId) {
+//   const s = DB.stock.find(s => s.productId === productId);
+//   return s ? s.quantity : 0;
+// }
+
+// function addStock(productId, quantity, rollId, note, userId) {
+//   let stock = DB.stock.find(s => s.productId === productId);
+//   if (!stock) {
+//     stock = { productId, quantity: 0 };
+//     DB.stock.push(stock);
+//   }
+//   stock.quantity += quantity;
+
+//   DB.stockMovements.push({
+//     id: nextId('STMV'),
+//     productId,
+//     type: 'in',
+//     quantity,
+//     rollId: rollId || '',
+//     note: note || '',
+//     userId,
+//     date: nowStr(),
+//   });
+// }
+
+// function reduceStock(productId, quantity, userId, saleId) {
+//   const stock = DB.stock.find(s => s.productId === productId);
+//   if (!stock || stock.quantity < quantity) return false;
+//   stock.quantity -= quantity;
+
+//   DB.stockMovements.push({
+//     id: nextId('STMV'),
+//     productId,
+//     type: 'out',
+//     quantity,
+//     rollId: '',
+//     note: `Sotuv: ${saleId}`,
+//     userId,
+//     date: nowStr(),
+//   });
+//   return true;
+// }
+
+// function returnStock(productId, quantity, userId, saleId) {
+//   let stock = DB.stock.find(s => s.productId === productId);
+//   if (!stock) {
+//     stock = { productId, quantity: 0 };
+//     DB.stock.push(stock);
+//   }
+//   stock.quantity += quantity;
+//   DB.stockMovements.push({
+//     id: nextId('STMV'),
+//     productId,
+//     type: 'cancel',
+//     quantity,
+//     rollId: '',
+//     note: `Sotuv bekor qilindi: ${saleId}`,
+//     userId,
+//     date: nowStr(),
+//   });
+// }
+
+// // ============================================================
+// // KLAVIATURALAR
+// // ============================================================
+
+// function adminMenuKeyboard() {
+//   return Markup.keyboard([
+//     ['📦 Ombor', '🛒 Sotuv qilish'],
+//     ['👥 Mijozlar', '🔴 Qarzdorlar'],
+//     ['📥 Tunka kirimi', '💰 Pul kirimi', '📤 Chiqim'],
+//     ['📊 Kunlik hisobot', '📅 Oylik hisobot'],
+//     ['📜 Tarix', '🧾 Cheklar'],
+//     ['⚙️ Sozlamalar', '👑 Admin paneli'],
+//   ]).resize();
+// }
+
+// function workerMenuKeyboard() {
+//   return Markup.keyboard([
+//     ['🛒 Sotuv qilish', '👥 Mijozlar'],
+//     ['🔴 Qarzdorlar'],
+//     ['🧾 Mening cheklarim', '📜 Mening sotuvlarim'],
+//   ]).resize();
+// }
+
+// function backKeyboard() {
+//   return Markup.keyboard([['⬅️ Orqaga', '🏠 Bosh menyu']]).resize();
+// }
+
+// function cancelKeyboard() {
+//   return Markup.keyboard([['❌ Bekor qilish']]).resize();
+// }
+
+// function homeKeyboard(ctx) {
+//   return isAdmin(ctx) ? adminMenuKeyboard() : workerMenuKeyboard();
+// }
+
+// // Inline back button
+// function inlineBack(callbackData = 'home') {
+//   return Markup.inlineKeyboard([
+//     [Markup.button.callback('⬅️ Orqaga', callbackData)],
+//   ]);
+// }
+
+// // ============================================================
+// // SESSION / STATE BOSHQARUV
+// // ============================================================
+
+// bot.use(session());
+
+// // Foydalanuvchi holatini olish
+// function getState(ctx) {
+//   if (!ctx.session) ctx.session = {};
+//   return ctx.session;
+// }
+
+// function setState(ctx, partial) {
+//   if (!ctx.session) ctx.session = {};
+//   ctx.session = { ...ctx.session, ...partial };
+// }
+
+// function clearState(ctx) {
+//   ctx.session = {};
+// }
+
+// // ============================================================
+// // PERMISSION MIDDLEWARE
+// // ============================================================
+
+// async function authMiddleware(ctx, next) {
+//   if (!isAuthorized(ctx)) {
+//     return ctx.reply('❌ Sizda ushbu botdan foydalanish huquqi yo\'q.');
+//   }
+//   return next();
+// }
+
+// bot.use(async (ctx, next) => {
+//   try {
+//     return await authMiddleware(ctx, next);
+//   } catch (e) {
+//     console.error('Middleware xatolik:', e.message);
+//   }
+// });
+
+// // ============================================================
+// // ASOSIY MENYU
+// // ============================================================
+
+// async function showMenu(ctx) {
+//   clearState(ctx);
+//   const user = getUser(ctx);
+//   if (!user) return;
+
+//   if (isAdmin(ctx)) {
+//     // Admin dashboard
+//     const todaySales = DB.sales.filter(s => s.date.startsWith(todayStr()) && s.status === 'active');
+//     const todayTotal = todaySales.reduce((a, s) => a + s.total, 0);
+//     const totalDebt = DB.customers.reduce((a, c) => {
+//       const d = DB.debts.filter(db => db.customerId === c.id && db.status === 'active').reduce((x, d) => x + d.amount, 0);
+//       const p = DB.payments.filter(p => p.customerId === c.id).reduce((x, p) => x + p.amount, 0);
+//       return a + Math.max(0, d - p);
+//     }, 0);
+//     const stockTotal = DB.stock.reduce((a, s) => a + s.quantity, 0);
+//     const todayIncome = DB.income.filter(i => i.date.startsWith(todayStr())).reduce((a, i) => a + i.amount, 0);
+//     const todayExpenses = DB.expenses.filter(e => e.date.startsWith(todayStr())).reduce((a, e) => a + e.amount, 0);
+//     const lowStockCount = DB.products.filter(p => {
+//       if (p.status === 'archived') return false;
+//       return getStockQuantity(p.id) <= p.minStock;
+//     }).length;
+
+//     let msg = `🏭 TUNKA HISOB\n\n`;
+//     msg += `📦 Ombor: ${fmtNum(stockTotal)} metr\n`;
+//     msg += `🛒 Bugungi sotuv: ${fmtSom(todayTotal)}\n`;
+//     msg += `🔴 Jami nasiya: ${fmtSom(totalDebt)}\n`;
+//     msg += `💰 Bugun tushgan: ${fmtSom(todayIncome)}\n`;
+//     msg += `📤 Bugungi chiqim: ${fmtSom(todayExpenses)}\n`;
+//     msg += `⚠️ Kam qolgan mahsulot: ${lowStockCount} ta`;
+
+//     await ctx.reply(msg, adminMenuKeyboard());
+//   } else {
+//     await ctx.reply('🏭 TUNKA HISOB BOTI', workerMenuKeyboard());
+//   }
+// }
+
+// // ============================================================
+// // /start komandasi
+// // ============================================================
+
+// bot.start(async (ctx) => {
+//   if (!isAuthorized(ctx)) {
+//     return ctx.reply('❌ Sizda ushbu botdan foydalanish huquqi yo\'q.');
+//   }
+//   await ctx.reply(`🏭 TUNKA HISOB BOTI\n\nXush kelibsiz, ${getUser(ctx)?.name || 'Foydalanuvchi'}!`);
+//   await showMenu(ctx);
+// });
+
+// bot.command('menu', async (ctx) => {
+//   if (!isAuthorized(ctx)) return;
+//   await showMenu(ctx);
+// });
+
+// // ============================================================
+// // OMBOR BO'LIMI
+// // ============================================================
+
+// async function showWarehouse(ctx) {
+//   if (!isAdmin(ctx)) return ctx.reply('❌ Bu bo\'lim faqat admin uchun.');
+//   clearState(ctx);
+//   const products = DB.products.filter(p => p.status === 'active');
+//   if (products.length === 0) {
+//     return ctx.reply('📦 Ombor bo\'sh.\n\nMahsulot qo\'shish uchun Admin panelidan foydalaning.', backKeyboard());
+//   }
+//   let msg = '📦 OMBOR\n\n';
+//   products.forEach(p => {
+//     const qty = getStockQuantity(p.id);
+//     const low = qty <= p.minStock ? ' ⚠️' : '';
+//     msg += `🏭 ${p.name} ${p.type}\n`;
+//     msg += `📦 Qoldiq: ${fmtNum(qty)} metr${low}\n`;
+//     msg += `💰 Narx: ${fmtNum(p.unitPrice)} so'm\n\n`;
+//   });
+//   const buttons = products.map(p => [Markup.button.callback(`🏭 ${p.name} ${p.type}`, `prod_${p.id}`)]);
+//   buttons.push([Markup.button.callback('⬅️ Orqaga', 'home')]);
+//   await ctx.reply(msg, Markup.inlineKeyboard(buttons));
+// }
+
+// // Mahsulot detallari
+// async function showProductDetail(ctx, productId) {
+//   const product = DB.products.find(p => p.id === productId);
+//   if (!product) return ctx.answerCbQuery('Mahsulot topilmadi.');
+
+//   const qty = getStockQuantity(productId);
+//   const totalIn = DB.stockMovements.filter(m => m.productId === productId && m.type === 'in').reduce((a, m) => a + m.quantity, 0);
+//   const totalOut = DB.stockMovements.filter(m => m.productId === productId && (m.type === 'out' || m.type === 'cancel')).reduce((a, m) => a + m.quantity, 0);
+//   const value = qty * product.unitPrice;
+
+//   const firstIn = DB.stockMovements.find(m => m.productId === productId && m.type === 'in');
+
+//   let msg = `🏭 ${product.name} ${product.type}\n\n`;
+//   msg += `📅 Birinchi kirim: ${firstIn ? prettyDate(firstIn.date.split(' ')[0]) : '-'}\n\n`;
+//   msg += `📥 Jami kirgan: ${fmtNum(totalIn)} m\n`;
+//   msg += `📉 Jami sotilgan: ${fmtNum(totalOut)} m\n`;
+//   msg += `📦 Hozirgi qoldiq: ${fmtNum(qty)} m\n\n`;
+//   msg += `💰 1 metr narxi: ${fmtNum(product.unitPrice)} so'm\n\n`;
+//   msg += `💵 Qoldiq qiymati:\n${fmtSom(value)}\n`;
+
+//   const buttons = [
+//     [Markup.button.callback('📥 Kirimlar tarixi', `prodin_${productId}`)],
+//     [Markup.button.callback('🛒 Sotuvlar tarixi', `prodsales_${productId}`)],
+//     [Markup.button.callback('📊 Qoldiq harakati', `prodmove_${productId}`)],
+//     [Markup.button.callback('✏️ Tahrirlash', `prodedit_${productId}`)],
+//   ];
+//   if (product.status === 'active') {
+//     buttons.push([Markup.button.callback('🗑 Arxivlash', `prodarchive_${productId}`)]);
+//   }
+//   buttons.push([Markup.button.callback('⬅️ Orqaga', 'warehouse')]);
+
+//   await ctx.editMessageText(msg, Markup.inlineKeyboard(buttons));
+// }
+
+// // ============================================================
+// // SOTUV JARAYONI (multi-step session)
+// // ============================================================
+
+// // Sotuvni boshlash
+// async function startSale(ctx) {
+//   clearState(ctx);
+//   setState(ctx, { step: 'sale_customer' });
+
+//   const customers = DB.customers.filter(c => c.status === 'active');
+//   let msg = '👤 Mijozni tanlang:\n\n';
+//   const buttons = [];
+
+//   customers.slice(0, 20).forEach(c => {
+//     buttons.push([Markup.button.callback(`👤 ${c.name}`, `salecust_${c.id}`)]);
+//   });
+//   buttons.push([Markup.button.callback('➕ Yangi mijoz', 'sale_new_customer')]);
+//   buttons.push([Markup.button.callback('❌ Bekor qilish', 'cancel')]);
+
+//   if (customers.length === 0) {
+//     msg = '👤 Mijozlar yo\'q.\n\nYangi mijoz qo\'shing:';
+//   } else {
+//     msg += customers.slice(0, 20).map(c => `• ${c.name} (${c.id})`).join('\n');
+//   }
+
+//   await ctx.reply(msg, Markup.inlineKeyboard(buttons));
+// }
+
+// // Yangi mijoz (sotuv ichida)
+// async function saleNewCustomer(ctx) {
+//   setState(ctx, { step: 'sale_new_customer_name' });
+//   await ctx.reply('👤 Mijoz ismi:', cancelKeyboard());
+// }
+
+// // Mijoz tanlandi, tunka tanlash
+// async function saleSelectProduct(ctx, customerId) {
+//   const customer = DB.customers.find(c => c.id === customerId);
+//   if (!customer) return ctx.answerCbQuery('Mijoz topilmadi.');
+
+//   const products = DB.products.filter(p => p.status === 'active');
+//   const available = products.filter(p => getStockQuantity(p.id) > 0);
+
+//   if (available.length === 0) {
+//     return ctx.editMessageText('📦 Sotish uchun mahsulot yo\'q.', inlineBack('cancel_sale'));
+//   }
+
+//   setState(ctx, { step: 'sale_product', saleCustomerId: customerId });
+//   let msg = `👤 Mijoz: ${customer.name}\n\n🏭 Tunkani tanlang:`;
+//   const buttons = available.map(p => {
+//     const qty = getStockQuantity(p.id);
+//     return [Markup.button.callback(`🏭 ${p.name} ${p.type} (${fmtNum(qty)}m)`, `saleprod_${p.id}`)];
+//   });
+//   buttons.push([Markup.button.callback('❌ Bekor qilish', 'cancel')]);
+//   await ctx.editMessageText(msg, Markup.inlineKeyboard(buttons));
+// }
+
+// // Tunka tanlandi, metr kiritish
+// async function saleEnterQuantity(ctx, productId) {
+//   const product = DB.products.find(p => p.id === productId);
+//   if (!product) return ctx.answerCbQuery('Mahsulot topilmadi.');
+//   const qty = getStockQuantity(productId);
+
+//   setState(ctx, { step: 'sale_quantity', saleProductId: productId });
+//   await ctx.editMessageText(
+//     `🏭 ${product.name} ${product.type}\n📦 Mavjud: ${fmtNum(qty)} metr\n💰 Narx: ${fmtNum(product.unitPrice)} so'm\n\n📏 Necha metr sotildi?\n\nMasalan: 20`,
+//     Markup.inlineKeyboard([[Markup.button.callback('❌ Bekor qilish', 'cancel')]])
+//   );
+// }
+
+// // Qayta ishlash tanlash
+// async function saleSelectProcessing(ctx) {
+//   const st = getState(ctx);
+//   const product = DB.products.find(p => p.id === st.saleProductId);
+//   const unitPrice = product.unitPrice;
+//   const qty = st.saleQuantity;
+//   const baseTotal = unitPrice * qty;
+//   const processingPercent = DB.settings.processingPercent || 2;
+
+//   setState(ctx, { step: 'sale_processing' });
+//   let msg = `🛠 Qayta ishlab berildimi?\n\n`;
+//   msg += `Mahsulot: ${product.name} ${product.type}\n`;
+//   msg += `Miqdor: ${fmtNum(qty)} metr\n`;
+//   msg += `Bazaviy narx: ${fmtNum(unitPrice)} so'm/metr\n`;
+//   msg += `Jami (bazaviy): ${fmtSom(baseTotal)}\n\n`;
+//   msg += `Qayta ishlash foizi: ${processingPercent}%\n`;
+//   if (processingPercent > 0) {
+//     const extra = unitPrice * processingPercent / 100;
+//     msg += `Qo'shimcha: ${fmtNum(extra)} so'm/metr\n`;
+//     msg += `Yangi narx: ${fmtNum(unitPrice + extra)} so'm/metr\n`;
+//     msg += `Yangi jami: ${fmtSom(baseTotal + extra * qty)}\n`;
+//   }
+
+//   const buttons = [
+//     [Markup.button.callback('✅ Ha, +%', 'saleproc_yes'), Markup.button.callback('❌ Yo\'q', 'saleproc_no')],
+//     [Markup.button.callback('❌ Bekor qilish', 'cancel')],
+//   ];
+//   await ctx.reply(msg, Markup.inlineKeyboard(buttons));
+// }
+
+// // To'lov turini tanlash
+// async function saleSelectPayment(ctx) {
+//   const st = getState(ctx);
+//   const product = DB.products.find(p => p.id === st.saleProductId);
+//   const qty = st.saleQuantity;
+//   let unitPrice = product.unitPrice;
+//   let processingApplied = false;
+//   const processingPercent = DB.settings.processingPercent || 2;
+
+//   if (st.saleProcessing) {
+//     const extra = unitPrice * processingPercent / 100;
+//     unitPrice = unitPrice + extra;
+//     processingApplied = true;
+//   }
+//   const total = unitPrice * qty;
+//   const exchangeRate = DB.settings.dollarRate || 12500;
+//   const usdAmount = total / exchangeRate;
+
+//   setState(ctx, {
+//     step: 'sale_payment',
+//     saleUnitPrice: unitPrice,
+//     saleTotal: total,
+//     saleProcessingApplied: processingApplied,
+//     saleProcessingPercent: processingPercent,
+//     saleExchangeRate: exchangeRate,
+//     saleUsdAmount: usdAmount,
+//   });
+
+//   let msg = `💳 To'lov turini tanlang:\n\n`;
+//   msg += `Jami: ${fmtSom(total)}\n`;
+//   msg += `Dollar: ${fmtUsd(usdAmount)}\n`;
+//   msg += `Kurs: 1 USD = ${fmtNum(exchangeRate)} so'm\n`;
+
+//   const buttons = [
+//     [Markup.button.callback('💵 Naqd', 'paycash'), Markup.button.callback('💳 Karta', 'paycard')],
+//     [Markup.button.callback('🔴 Nasiya', 'paydebt'), Markup.button.callback('🔀 Aralash', 'paymixed')],
+//     [Markup.button.callback('❌ Bekor qilish', 'cancel')],
+//   ];
+//   await ctx.reply(msg, Markup.inlineKeyboard(buttons));
+// }
+
+// // Aralash to'lov: naqd kiritish
+// async function saleMixedCash(ctx) {
+//   setState(ctx, { step: 'sale_mixed_cash' });
+//   const st = getState(ctx);
+//   await ctx.reply(`💵 Naqd to'lov summasini kiriting:\n\nJami: ${fmtSom(st.saleTotal)}\n\nMasalan: 500000`, cancelKeyboard());
+// }
+
+// // Aralash to'lov: karta kiritish
+// async function saleMixedCard(ctx) {
+//   setState(ctx, { step: 'sale_mixed_card' });
+//   const st = getState(ctx);
+//   const paid = st.saleMixedCash || 0;
+//   const remaining = st.saleTotal - paid;
+//   await ctx.reply(`💳 Karta to'lov summasini kiriting:\n\nQolgan: ${fmtSom(remaining)}\n\nMasalan: 300000`, cancelKeyboard());
+// }
+
+// // Sotuvni tasdiqlash va saqlash (ATOMIK)
+// async function confirmSale(ctx, paymentType, mixedPayments) {
+//   const st = getState(ctx);
+//   const user = getUser(ctx);
+//   const customer = DB.customers.find(c => c.id === st.saleCustomerId);
+//   const product = DB.products.find(p => p.id === st.saleProductId);
+
+//   if (!customer || !product) {
+//     clearState(ctx);
+//     return ctx.reply('❌ Mijoz yoki mahsulot topilmadi. Sotuv bekor qilindi.', homeKeyboard(ctx));
+//   }
+
+//   const qty = st.saleQuantity;
+//   const unitPrice = st.saleUnitPrice;
+//   const total = st.saleTotal;
+//   const exchangeRate = st.saleExchangeRate;
+//   const usdAmount = st.saleUsdAmount;
+//   const processingApplied = st.saleProcessingApplied;
+//   const processingPercent = st.saleProcessingPercent;
+
+//   // 1. Omborda mahsulot borligini tekshirish
+//   const stockQty = getStockQuantity(product.id);
+//   if (stockQty < qty) {
+//     let msg = `❌ Sotuvni amalga oshirib bo'lmaydi.\n\nOmborda:\n${fmtNum(stockQty)} metr\n\nSiz:\n${fmtNum(qty)} metr\n\nYetarli mahsulot mavjud emas.`;
+//     return ctx.reply(msg, Markup.inlineKeyboard([[Markup.button.callback('⬅️ Orqaga', 'home')]]));
+//   }
+
+//   // 2. To'lovni tekshirish
+//   let paid = 0;
+//   let debt = 0;
+
+//   if (paymentType === 'cash' || paymentType === 'card') {
+//     paid = total;
+//     debt = 0;
+//   } else if (paymentType === 'debt') {
+//     paid = 0;
+//     debt = total;
+//   } else if (paymentType === 'mixed') {
+//     paid = (mixedPayments.cash || 0) + (mixedPayments.card || 0);
+//     debt = (mixedPayments.debt || 0);
+//     if (paid + debt !== total) {
+//       return ctx.reply(`❌ To'lov summasi noto'g'ri.\n\nNaqd + Karta + Nasiya = Jami bo'lishi kerak.\n\nJami: ${fmtSom(total)}\nSiz kiritdingiz: ${fmtSom(paid + debt)}`, cancelKeyboard());
+//     }
+//   }
+
+//   // 3. Sotuv yaratish
+//   const saleId = nextId('SALE');
+//   const sale = {
+//     id: saleId,
+//     customerId: customer.id,
+//     productId: product.id,
+//     quantity: qty,
+//     unitPrice,
+//     processingApplied,
+//     processingPercent,
+//     total,
+//     paid,
+//     debt,
+//     paymentType,
+//     mixedPayments: paymentType === 'mixed' ? mixedPayments : null,
+//     exchangeRate,
+//     usdAmount,
+//     userId: user.id,
+//     date: nowStr(),
+//     status: 'active',
+//     cancelledBy: null,
+//     cancelledAt: null,
+//     cancelReason: null,
+//   };
+//   DB.sales.push(sale);
+
+//   // 4. Omborni kamaytirish
+//   if (!reduceStock(product.id, qty, user.id, saleId)) {
+//     // Rollback — sotuvni o'chirish
+//     DB.sales.pop();
+//     DB.counters.sale--;
+//     save();
+//     return ctx.reply('❌ Omborni kamaytirishda xatolik. Sotuv bekor qilindi.', homeKeyboard(ctx));
+//   }
+
+//   // 5. Nasiya bo'lsa qarz yaratish
+//   if (debt > 0) {
+//     const debtId = nextId('DEBT');
+//     DB.debts.push({
+//       id: debtId,
+//       customerId: customer.id,
+//       saleId,
+//       amount: debt,
+//       reason: `Sotuv: ${saleId}`,
+//       userId: user.id,
+//       date: nowStr(),
+//       status: 'active',
+//     });
+//   }
+
+//   // 6. To'lov yaratish (naqd/karta uchun)
+//   if (paid > 0 && paymentType !== 'debt') {
+//     const payId = nextId('PAY');
+//     DB.payments.push({
+//       id: payId,
+//       customerId: customer.id,
+//       saleId,
+//       amount: paid,
+//       prevDebt: 0,
+//       remaining: 0,
+//       method: paymentType,
+//       userId: user.id,
+//       date: nowStr(),
+//     });
+//   }
+
+//   // 7. Pul kirimi (to'langan summa uchun)
+//   if (paid > 0) {
+//     const incId = nextId('INC');
+//     DB.income.push({
+//       id: incId,
+//       source: paymentType === 'mixed' ? 'Aralash to\'lov' : (paymentType === 'cash' ? 'Naqd sotuv' : 'Karta sotuv'),
+//       customerId: customer.id,
+//       amount: paid,
+//       note: `Sotuv: ${saleId}`,
+//       userId: user.id,
+//       date: nowStr(),
+//     });
+//   }
+
+//   // 8. Audit log
+//   auditLog(user.id, 'Sotuv yaratildi', saleId, '', `${fmtSom(total)} - ${customer.name} - ${product.name} ${product.type}`);
+
+//   // 9. Saqlash
+//   save();
+
+//   // 10. PDF yaratish
+//   let receiptPath = null;
+//   try {
+//     receiptPath = await generateReceipt(sale, customer, product, user.name, DB.settings);
+//   } catch (e) {
+//     console.error('PDF yaratishda xatolik:', e.message);
+//   }
+
+//   // 11. Kam qoldiq tekshirish
+//   checkLowStock(product.id);
+
+//   // 12. Maxfiy guruhga yuborish
+//   const payTypeMap = { cash: 'Naqd', card: 'Karta', debt: 'Nasiya', mixed: 'Aralash' };
+//   let groupMsg = `🛒 YANGI SOTUV\n\nSotuv ID: ${saleId}\nMijoz: ${customer.name}\nTunka: ${product.name} ${product.type}\nMiqdor: ${fmtNum(qty)} metr\nJami: ${fmtSom(total)}\nTo'lov: ${payTypeMap[paymentType]}\nSotuvchi: ${user.name}\nSana: ${prettyDateTime(sale.date)}`;
+//   await sendToGroup(groupMsg);
+
+//   // Mijozga natija
+//   let resultMsg = `✅ Sotuv muvaffaqiyatli saqlandi.\n\n`;
+//   resultMsg += `🧾 Sotuv ID: ${saleId}\n`;
+//   resultMsg += `👤 Mijoz: ${customer.name}\n`;
+//   resultMsg += `🏭 Tunka: ${product.name} ${product.type}\n`;
+//   resultMsg += `📏 Miqdor: ${fmtNum(qty)} metr\n`;
+//   resultMsg += `💰 Jami: ${fmtSom(total)}\n`;
+//   resultMsg += `💵 Dollar: ${fmtUsd(usdAmount)}\n`;
+//   resultMsg += `💳 To'lov: ${payTypeMap[paymentType]}\n`;
+//   if (debt > 0) {
+//     resultMsg += `🔴 Qarz: ${fmtSom(debt)}\n`;
+//   }
+//   resultMsg += `\n🧾 Chek tayyor.`;
+
+//   clearState(ctx);
+
+//   const buttons = [];
+//   if (receiptPath) {
+//     buttons.push([Markup.button.callback('📄 PDF chek', `getpdf_${saleId}`)]);
+//   }
+//   buttons.push([Markup.button.callback('🏠 Bosh menyu', 'home')]);
+//   await ctx.reply(resultMsg, Markup.inlineKeyboard(buttons));
+// }
+
+// // ============================================================
+// // MIJOZLAR BO'LIMI
+// // ============================================================
+
+// async function showCustomers(ctx) {
+//   clearState(ctx);
+//   const customers = DB.customers.filter(c => c.status === 'active');
+//   if (customers.length === 0) {
+//     return ctx.reply('👥 Mijozlar yo\'q.', backKeyboard());
+//   }
+//   let msg = '👥 MIJOZLAR\n\n';
+//   const buttons = [];
+//   customers.forEach(c => {
+//     const debt = getCustomerDebt(c.id);
+//     msg += `👤 ${c.name} (${c.id})\n`;
+//     if (c.phone) msg += `📞 ${c.phone}\n`;
+//     if (debt > 0) msg += `🔴 Qarz: ${fmtSom(debt)}\n`;
+//     msg += '\n';
+//     buttons.push([Markup.button.callback(`👤 ${c.name}`, `cust_${c.id}`)]);
+//   });
+//   buttons.push([Markup.button.callback('➕ Yangi mijoz', 'newcustomer')]);
+//   buttons.push([Markup.button.callback('⬅️ Orqaga', 'home')]);
+//   await ctx.reply(msg, Markup.inlineKeyboard(buttons));
+// }
+
+// // Mijoz detallari
+// async function showCustomerDetail(ctx, customerId) {
+//   const customer = DB.customers.find(c => c.id === customerId);
+//   if (!customer) return ctx.answerCbQuery('Mijoz topilmadi.');
+
+//   const debt = getCustomerDebt(customerId);
+//   const sales = DB.sales.filter(s => s.customerId === customerId && s.status === 'active');
+//   const totalSales = sales.reduce((a, s) => a + s.total, 0);
+
+//   let msg = `👤 ${customer.name}\n\n`;
+//   msg += `ID: ${customer.id}\n`;
+//   if (customer.phone) msg += `📞 ${customer.phone}\n`;
+//   if (customer.note) msg += `📝 ${customer.note}\n`;
+//   msg += `📅 Qo'shilgan: ${prettyDate(customer.createdAt.split(' ')[0])}\n\n`;
+//   msg += `🛒 Jami sotuv: ${fmtNum(sales.length)} ta\n`;
+//   msg += `💰 Sotuv summasi: ${fmtSom(totalSales)}\n`;
+//   msg += `🔴 Hozirgi qarz: ${fmtSom(debt)}\n`;
+
+//   const buttons = [
+//     [Markup.button.callback('📜 Qarz tarixi', `custdebt_${customerId}`)],
+//     [Markup.button.callback('🛒 Sotuvlari', `custsales_${customerId}`)],
+//   ];
+//   if (debt > 0) {
+//     buttons.push([Markup.button.callback('💵 Qarz to\'lash', `custpay_${customerId}`)]);
+//   }
+//   if (isAdmin(ctx)) {
+//     buttons.push([Markup.button.callback('🔴 Nasiya qo\'shish', `custadddebt_${customerId}`)]);
+//     buttons.push([Markup.button.callback('✏️ Tahrirlash', `custedit_${customerId}`)]);
+//     buttons.push([Markup.button.callback('🗑 Arxivlash', `custarchive_${customerId}`)]);
+//   }
+//   buttons.push([Markup.button.callback('⬅️ Orqaga', 'customers')]);
+
+//   await ctx.editMessageText(msg, Markup.inlineKeyboard(buttons));
+// }
+
+// // Mijoz qarzi
+// function getCustomerDebt(customerId) {
+//   const debts = DB.debts.filter(d => d.customerId === customerId && d.status === 'active').reduce((a, d) => a + d.amount, 0);
+//   const payments = DB.payments.filter(p => p.customerId === customerId).reduce((a, p) => a + p.amount, 0);
+//   return Math.max(0, debts - payments);
+// }
+
+// // Yangi mijoz qo'shish
+// async function newCustomerStart(ctx) {
+//   setState(ctx, { step: 'new_customer_name' });
+//   await ctx.reply('👤 Mijoz ismi:', cancelKeyboard());
+// }
+
+// // ============================================================
+// // QARZDORLAR BO'LIMI
+// // ============================================================
+
+// async function showDebtors(ctx) {
+//   clearState(ctx);
+//   const customers = DB.customers.filter(c => c.status === 'active');
+//   const debtors = customers.map(c => ({ c, debt: getCustomerDebt(c.id) })).filter(x => x.debt > 0);
+
+//   if (debtors.length === 0) {
+//     return ctx.reply('🔴 Qarzdorlar yo\'q.', backKeyboard());
+//   }
+
+//   let msg = '🔴 QARZDORLAR\n\n';
+//   let total = 0;
+//   const buttons = [];
+//   debtors.forEach(({ c, debt }) => {
+//     msg += `👤 ${c.name}\n${fmtSom(debt)}\n\n`;
+//     total += debt;
+//     buttons.push([Markup.button.callback(`👤 ${c.name} - ${fmtNum(debt)} so'm`, `cust_${c.id}`)]);
+//   });
+//   msg += `━━━━━━━━━━━━\nJAMI QARZ:\n${fmtSom(total)}`;
+//   buttons.push([Markup.button.callback('⬅️ Orqaga', 'home')]);
+//   await ctx.reply(msg, Markup.inlineKeyboard(buttons));
+// }
+
+// // Qarz to'lash
+// async function payDebtStart(ctx, customerId) {
+//   const customer = DB.customers.find(c => c.id === customerId);
+//   if (!customer) return ctx.answerCbQuery('Mijoz topilmadi.');
+//   const debt = getCustomerDebt(customerId);
+//   if (debt <= 0) return ctx.answerCbQuery('Bu mijozda qarz yo\'q.');
+
+//   setState(ctx, { step: 'pay_debt', payDebtCustomerId: customerId });
+//   let msg = `👤 ${customer.name}\n\n🔴 Hozirgi qarz:\n${fmtSom(debt)}\n\n💵 Qancha to'ldi?\n\nMasalan: 500000`;
+//   await ctx.editMessageText(msg, Markup.inlineKeyboard([[Markup.button.callback('❌ Bekor qilish', 'cancel')]]));
+// }
+
+// // Qarz to'lashni saqlash
+// async function payDebtSave(ctx, amount) {
+//   const st = getState(ctx);
+//   const customer = DB.customers.find(c => c.id === st.payDebtCustomerId);
+//   if (!customer) {
+//     clearState(ctx);
+//     return ctx.reply('❌ Mijoz topilmadi.', homeKeyboard(ctx));
+//   }
+
+//   const prevDebt = getCustomerDebt(customer.id);
+//   if (amount > prevDebt) {
+//     return ctx.reply(`❌ To'lov summasi qarzdan ko'p.\n\nQarz: ${fmtSom(prevDebt)}\nSiz: ${fmtSom(amount)}`, cancelKeyboard());
+//   }
+
+//   const remaining = prevDebt - amount;
+//   const user = getUser(ctx);
+//   const payId = nextId('PAY');
+
+//   DB.payments.push({
+//     id: payId,
+//     customerId: customer.id,
+//     saleId: null,
+//     amount,
+//     prevDebt,
+//     remaining,
+//     method: 'debt_payment',
+//     userId: user.id,
+//     date: nowStr(),
+//   });
+
+//   // Pul kirimi
+//   const incId = nextId('INC');
+//   DB.income.push({
+//     id: incId,
+//     source: 'Qarz to\'lovi',
+//     customerId: customer.id,
+//     amount,
+//     note: `To'lov: ${payId}`,
+//     userId: user.id,
+//     date: nowStr(),
+//   });
+
+//   auditLog(user.id, 'Qarz to\'lovi', customer.id, `${prevDebt}`, `${remaining}`);
+//   save();
+
+//   // Maxfiy guruhga
+//   let groupMsg = `💵 QARZ TO'LOVI\n\nMijoz: ${customer.name}\nTo'landi: ${fmtSom(amount)}\nQolgan qarz: ${fmtSom(remaining)}\nQabul qildi: ${user.name}\nSana: ${prettyDateTime(nowStr())}`;
+//   await sendToGroup(groupMsg);
+
+//   clearState(ctx);
+//   let msg = '';
+//   if (remaining === 0) {
+//     msg = `✅ QARZ TO'LIQ TO'LANDI\n\n👤 ${customer.name}\n\nTo'langan:\n${fmtSom(amount)}\n\nQoldiq:\n0 so'm\n\nHolat:\n✅ TO'LANDI`;
+//   } else {
+//     msg = `✅ TO'LOV QABUL QILINDI\n\n👤 Mijoz:\n${customer.name}\n\nOldingi qarz:\n${fmtSom(prevDebt)}\n\nTo'landi:\n${fmtSom(amount)}\n\nQolgan qarz:\n${fmtSom(remaining)}`;
+//   }
+//   await ctx.reply(msg, homeKeyboard(ctx));
+// }
+
+// // Nasiya qo'shish (admin)
+// async function addDebtStart(ctx, customerId) {
+//   if (!isAdmin(ctx)) return ctx.answerCbQuery('Faqat admin uchun.');
+//   const customer = DB.customers.find(c => c.id === customerId);
+//   if (!customer) return ctx.answerCbQuery('Mijoz topilmadi.');
+
+//   setState(ctx, { step: 'add_debt', addDebtCustomerId: customerId });
+//   await ctx.editMessageText(
+//     `🔴 Nasiya qo'shish\n\n👤 Mijoz: ${customer.name}\n\n💰 Summa:\n\nMasalan: 2000000`,
+//     Markup.inlineKeyboard([[Markup.button.callback('❌ Bekor qilish', 'cancel')]])
+//   );
+// }
+
+// // Nasiya qo'shishni saqlash
+// async function addDebtSave(ctx, amount) {
+//   const st = getState(ctx);
+//   const customer = DB.customers.find(c => c.id === st.addDebtCustomerId);
+//   if (!customer) {
+//     clearState(ctx);
+//     return ctx.reply('❌ Mijoz topilmadi.', homeKeyboard(ctx));
+//   }
+
+//   const user = getUser(ctx);
+//   const prevDebt = getCustomerDebt(customer.id);
+//   const debtId = nextId('DEBT');
+
+//   DB.debts.push({
+//     id: debtId,
+//     customerId: customer.id,
+//     saleId: null,
+//     amount,
+//     reason: 'Qo\'shimcha nasiya',
+//     userId: user.id,
+//     date: nowStr(),
+//     status: 'active',
+//   });
+
+//   const newDebt = prevDebt + amount;
+//   auditLog(user.id, 'Nasiya qo\'shildi', customer.id, `${prevDebt}`, `${newDebt}`);
+//   save();
+
+//   let groupMsg = `🔴 NASIYA QO'SHILDI\n\nMijoz: ${customer.name}\nSumma: ${fmtSom(amount)}\nJami qarz: ${fmtSom(newDebt)}\nKim: ${user.name}\nSana: ${prettyDateTime(nowStr())}`;
+//   await sendToGroup(groupMsg);
+
+//   clearState(ctx);
+//   await ctx.reply(`✅ Nasiya qo'shildi.\n\n👤 ${customer.name}\n\nOldingi qarz: ${fmtSom(prevDebt)}\nQo'shildi: +${fmtSom(amount)}\nJami qarz: ${fmtSom(newDebt)}`, homeKeyboard(ctx));
+// }
+
+// // Qarz tarixi
+// async function showDebtHistory(ctx, customerId) {
+//   const customer = DB.customers.find(c => c.id === customerId);
+//   if (!customer) return ctx.answerCbQuery('Mijoz topilmadi.');
+
+//   const debts = DB.debts.filter(d => d.customerId === customerId).sort((a, b) => a.date.localeCompare(b.date));
+//   const payments = DB.payments.filter(p => p.customerId === customerId).sort((a, b) => a.date.localeCompare(b.date));
+
+//   // Birlashtirish
+//   const events = [];
+//   debts.forEach(d => events.push({ type: 'debt', date: d.date, amount: d.amount, id: d.id }));
+//   payments.forEach(p => events.push({ type: 'payment', date: p.date, amount: p.amount, id: p.id }));
+//   events.sort((a, b) => a.date.localeCompare(b.date));
+
+//   if (events.length === 0) {
+//     return ctx.editMessageText(`👤 ${customer.name}\n\nQarz tarixi yo\'q.`, inlineBack('customers'));
+//   }
+
+//   let msg = `👤 ${customer.name.toUpperCase()}\n\n`;
+//   let runningDebt = 0;
+//   events.forEach(e => {
+//     if (e.type === 'debt') {
+//       runningDebt += e.amount;
+//       msg += `${prettyDateTime(e.date)}\n🔴 Nasiya:\n${fmtSom(e.amount)}\n\n`;
+//     } else {
+//       runningDebt -= e.amount;
+//       msg += `${prettyDateTime(e.date)}\n💵 To'lov:\n${fmtSom(e.amount)}\n\n`;
+//     }
+//   });
+//   msg += `━━━━━━━━━━━━\nHozirgi qarz:\n${fmtSom(Math.max(0, runningDebt))}\n`;
+//   msg += `Holat: ${runningDebt <= 0 ? '✅ TO\'LANDI' : '🔴 QARZ BOR'}`;
+
+//   await ctx.editMessageText(msg, inlineBack('customers'));
+// }
+
+// // ============================================================
+// // TUNKA KIRIMI
+// // ============================================================
+
+// async function startStockIn(ctx) {
+//   if (!isAdmin(ctx)) return ctx.reply('❌ Bu bo\'lim faqat admin uchun.');
+//   clearState(ctx);
+//   const products = DB.products.filter(p => p.status === 'active');
+//   const buttons = products.map(p => [Markup.button.callback(`🏭 ${p.name} ${p.type}`, `stockin_${p.id}`)]);
+//   buttons.push([Markup.button.callback('➕ Yangi tunka', 'stockin_new')]);
+//   buttons.push([Markup.button.callback('❌ Bekor qilish', 'cancel')]);
+
+//   let msg = '📥 Tunka kirimi\n\nMahsulotni tanlang yoki yangi qo\'shing:';
+//   if (products.length === 0) msg = '📥 Tunka kirimi\n\nMahsulot yo\'q. Yangi tunka qo\'shing:';
+//   setState(ctx, { step: 'stock_in_select' });
+//   await ctx.reply(msg, Markup.inlineKeyboard(buttons));
+// }
+
+// // Mavjud mahsulotga kirim
+// async function stockInForProduct(ctx, productId) {
+//   const product = DB.products.find(p => p.id === productId);
+//   if (!product) return ctx.answerCbQuery('Mahsulot topilmadi.');
+//   setState(ctx, { step: 'stock_in_roll', stockInProductId: productId });
+//   await ctx.editMessageText(
+//     `🏭 ${product.name} ${product.type}\n\n📦 Rulon raqami:\n\nMasalan: 001`,
+//     Markup.inlineKeyboard([[Markup.button.callback('❌ Bekor qilish', 'cancel')]])
+//   );
+// }
+
+// // Yangi tunka qo'shish
+// async function newProductStart(ctx) {
+//   setState(ctx, { step: 'new_product_name' });
+//   await ctx.reply('🏭 Tunka nomi:\n\nMasalan: Premium', cancelKeyboard());
+// }
+
+// // ============================================================
+// // PUL KIRIMI
+// // ============================================================
+
+// async function startIncome(ctx) {
+//   if (!isAdmin(ctx)) return ctx.reply('❌ Bu bo\'lim faqat admin uchun.');
+//   clearState(ctx);
+//   setState(ctx, { step: 'income_source' });
+//   const buttons = [
+//     [Markup.button.callback('💵 Qarz to\'lovi', 'incsrc_qarz'), Markup.button.callback('💰 Boshqa', 'incsrc_other')],
+//     [Markup.button.callback('❌ Bekor qilish', 'cancel')],
+//   ];
+//   await ctx.reply('💰 Pul kirimi\n\nManba:', Markup.inlineKeyboard(buttons));
+// }
+
+// // ============================================================
+// // CHIQIM
+// // ============================================================
+
+// async function startExpense(ctx) {
+//   if (!isAdmin(ctx)) return ctx.reply('❌ Bu bo\'lim faqat admin uchun.');
+//   clearState(ctx);
+//   setState(ctx, { step: 'expense_type' });
+//   const buttons = [
+//     [Markup.button.callback('🚚 Transport', 'exptype_transport'), Markup.button.callback('👷 Ishchi haqi', 'exptype_worker')],
+//     [Markup.button.callback('🏢 Ijara', 'exptype_rent'), Markup.button.callback('🔧 Ta\'mirlash', 'exptype_repair')],
+//     [Markup.button.callback('📦 Boshqa', 'exptype_other')],
+//     [Markup.button.callback('❌ Bekor qilish', 'cancel')],
+//   ];
+//   await ctx.reply('📤 Chiqim\n\nTurini tanlang:', Markup.inlineKeyboard(buttons));
+// }
+
+// // ============================================================
+// // HISOBOTLAR
+// // ============================================================
+
+// async function dailyReportStart(ctx) {
+//   if (!isAdmin(ctx)) return ctx.reply('❌ Bu bo\'lim faqat admin uchun.');
+//   setState(ctx, { step: 'daily_report_date' });
+//   await ctx.reply('📊 Kunlik hisobot\n\nSanani kiriting (DD.MM.YYYY):\n\nMasalan: 11.09.2026\n\nYoki bugun uchun "bugun" deb yozing:', cancelKeyboard());
+// }
+
+// function generateDailyReportData(dateStr) {
+//   // dateStr: YYYY-MM-DD
+//   const sales = DB.sales.filter(s => s.date.startsWith(dateStr) && s.status === 'active');
+//   const totalMeters = sales.reduce((a, s) => a + s.quantity, 0);
+//   const totalSales = sales.reduce((a, s) => a + s.total, 0);
+//   const cash = sales.filter(s => s.paymentType === 'cash').reduce((a, s) => a + s.paid, 0)
+//     + sales.filter(s => s.paymentType === 'mixed').reduce((a, s) => a + (s.mixedPayments?.cash || 0), 0);
+//   const card = sales.filter(s => s.paymentType === 'card').reduce((a, s) => a + s.paid, 0)
+//     + sales.filter(s => s.paymentType === 'mixed').reduce((a, s) => a + (s.mixedPayments?.card || 0), 0);
+//   const debt = sales.reduce((a, s) => a + s.debt, 0);
+//   const debtPayments = DB.payments.filter(p => p.date.startsWith(dateStr) && p.method === 'debt_payment').reduce((a, p) => a + p.amount, 0);
+//   const expenses = DB.expenses.filter(e => e.date.startsWith(dateStr)).reduce((a, e) => a + e.amount, 0);
+//   const stockTotal = DB.stock.reduce((a, s) => a + s.quantity, 0);
+
+//   const salesList = sales.map(s => {
+//     const c = DB.customers.find(c => c.id === s.customerId);
+//     const payTypeMap = { cash: 'Naqd', card: 'Karta', debt: 'Nasiya', mixed: 'Aralash' };
+//     return { id: s.id, customerName: c?.name || '?', total: s.total, paymentType: payTypeMap[s.paymentType] };
+//   });
+
+//   return { totalMeters, totalSales, cash, card, debt, debtPayments, expenses, stockTotal, sales: salesList };
+// }
+
+// async function showDailyReport(ctx, dateStr) {
+//   const report = generateDailyReportData(dateStr);
+//   let msg = `📊 KUNLIK HISOBOT\n\n📅 ${prettyDate(dateStr)}\n\n`;
+//   msg += `📦 Sotilgan tunka: ${fmtNum(report.totalMeters)} metr\n`;
+//   msg += `🛒 Sotuvlar: ${fmtSom(report.totalSales)}\n\n`;
+//   msg += `💵 Naqd: ${fmtSom(report.cash)}\n`;
+//   msg += `💳 Karta: ${fmtSom(report.card)}\n`;
+//   msg += `🔴 Nasiya: ${fmtSom(report.debt)}\n\n`;
+//   msg += `💰 Qarzdan tushgan: ${fmtSom(report.debtPayments)}\n`;
+//   msg += `📤 Chiqim: ${fmtSom(report.expenses)}\n\n`;
+//   msg += `📦 Ombor qoldig'i: ${fmtNum(report.stockTotal)} metr`;
+
+//   clearState(ctx);
+//   const buttons = [
+//     [Markup.button.callback('📄 PDF qilib yuklash', `dailypdf_${dateStr}`)],
+//     [Markup.button.callback('🏠 Bosh menyu', 'home')],
+//   ];
+//   await ctx.reply(msg, Markup.inlineKeyboard(buttons));
+// }
+
+// async function monthlyReportStart(ctx) {
+//   if (!isAdmin(ctx)) return ctx.reply('❌ Bu bo\'lim faqat admin uchun.');
+//   setState(ctx, { step: 'monthly_report' });
+//   await ctx.reply('📅 Oylik hisobot\n\nOyni kiriting (YYYY-MM):\n\nMasalan: 2026-09\n\nYoki shu oy uchun "shuoy" deb yozing:', cancelKeyboard());
+// }
+
+// function generateMonthlyReportData(monthStr) {
+//   // monthStr: YYYY-MM
+//   const stockIn = DB.stockMovements.filter(m => m.type === 'in' && m.date.startsWith(monthStr)).reduce((a, m) => a + m.quantity, 0);
+//   const stockOut = DB.stockMovements.filter(m => m.type === 'out' && m.date.startsWith(monthStr)).reduce((a, m) => a + m.quantity, 0);
+//   const stockTotal = DB.stock.reduce((a, s) => a + s.quantity, 0);
+//   const sales = DB.sales.filter(s => s.date.startsWith(monthStr) && s.status === 'active');
+//   const totalSales = sales.reduce((a, s) => a + s.total, 0);
+//   const cash = sales.filter(s => s.paymentType === 'cash').reduce((a, s) => a + s.paid, 0)
+//     + sales.filter(s => s.paymentType === 'mixed').reduce((a, s) => a + (s.mixedPayments?.cash || 0), 0);
+//   const card = sales.filter(s => s.paymentType === 'card').reduce((a, s) => a + s.paid, 0)
+//     + sales.filter(s => s.paymentType === 'mixed').reduce((a, s) => a + (s.mixedPayments?.card || 0), 0);
+//   const debt = sales.reduce((a, s) => a + s.debt, 0);
+//   const debtPayments = DB.payments.filter(p => p.date.startsWith(monthStr) && p.method === 'debt_payment').reduce((a, p) => a + p.amount, 0);
+//   const expenses = DB.expenses.filter(e => e.date.startsWith(monthStr)).reduce((a, e) => a + e.amount, 0);
+
+//   return { totalIn: stockIn, totalOut: stockOut, stockTotal, totalSales, cash, card, debt, debtPayments, expenses };
+// }
+
+// async function showMonthlyReport(ctx, monthStr) {
+//   const report = generateMonthlyReportData(monthStr);
+//   let msg = `📊 OYLIK HISOBOT\n\nOy: ${prettyMonth(monthStr)}\n\n`;
+//   msg += `📦 Jami kirim: ${fmtNum(report.totalIn)} metr\n`;
+//   msg += `📉 Jami sotuv: ${fmtNum(report.totalOut)} metr\n`;
+//   msg += `📦 Qoldiq: ${fmtNum(report.stockTotal)} metr\n\n`;
+//   msg += `💰 Jami sotuv: ${fmtSom(report.totalSales)}\n\n`;
+//   msg += `💵 Naqd: ${fmtSom(report.cash)}\n`;
+//   msg += `💳 Karta: ${fmtSom(report.card)}\n`;
+//   msg += `🔴 Nasiya: ${fmtSom(report.debt)}\n\n`;
+//   msg += `💰 Qarzdan tushum: ${fmtSom(report.debtPayments)}\n`;
+//   msg += `📤 Chiqim: ${fmtSom(report.expenses)}`;
+
+//   clearState(ctx);
+//   const buttons = [
+//     [Markup.button.callback('📄 PDF qilib yuklash', `monthlypdf_${monthStr}`)],
+//     [Markup.button.callback('🏠 Bosh menyu', 'home')],
+//   ];
+//   await ctx.reply(msg, Markup.inlineKeyboard(buttons));
+// }
+
+// // ============================================================
+// // TARIX
+// // ============================================================
+
+// async function showHistory(ctx) {
+//   if (!isAdmin(ctx)) return ctx.reply('❌ Bu bo\'lim faqat admin uchun.');
+//   clearState(ctx);
+//   const events = [];
+
+//   DB.stockMovements.filter(m => m.type === 'in').forEach(m => {
+//     const p = DB.products.find(p => p.id === m.productId);
+//     const u = DB.users.find(u => u.id === m.userId);
+//     events.push({ date: m.date, text: `📥 Tunka kirimi\n${u?.name || '?'}\n+${fmtNum(m.quantity)} metr${p ? ' - ' + p.name + ' ' + p.type : ''}` });
+//   });
+
+//   DB.sales.filter(s => s.status === 'active').forEach(s => {
+//     const c = DB.customers.find(c => c.id === s.customerId);
+//     const p = DB.products.find(p => p.id === s.productId);
+//     const u = DB.users.find(u => u.id === s.userId);
+//     events.push({ date: s.date, text: `🛒 Sotuv\n${u?.name || '?'}\n-${fmtNum(s.quantity)} metr${p ? ' - ' + p.name : ''}${c ? ' - ' + c.name : ''}` });
+//   });
+
+//   DB.payments.forEach(p => {
+//     const c = DB.customers.find(c => c.id === p.customerId);
+//     const u = DB.users.find(u => u.id === p.userId);
+//     events.push({ date: p.date, text: `💵 Qarz to'lovi\n${u?.name || '?'}\n+${fmtSom(p.amount)}${c ? ' - ' + c.name : ''}` });
+//   });
+
+//   DB.expenses.forEach(e => {
+//     events.push({ date: e.date, text: `📤 Chiqim\n${fmtSom(e.amount)} - ${e.type}` });
+//   });
+
+//   events.sort((a, b) => b.date.localeCompare(a.date));
+//   const top = events.slice(0, 30);
+
+//   if (top.length === 0) {
+//     return ctx.reply('📜 Tarix bo\'sh.', backKeyboard());
+//   }
+
+//   let msg = '📜 TARIX (oxirgi 30 ta)\n\n';
+//   top.forEach(e => {
+//     msg += `${prettyDateTime(e.date)}\n${e.text}\n\n`;
+//   });
+//   await ctx.reply(msg, backKeyboard());
+// }
+
+// // Ishchining o'z sotuvlari
+// async function showMySales(ctx) {
+//   clearState(ctx);
+//   const user = getUser(ctx);
+//   const sales = DB.sales.filter(s => s.userId === user.id && s.status === 'active').sort((a, b) => b.date.localeCompare(a.date)).slice(0, 20);
+
+//   if (sales.length === 0) {
+//     return ctx.reply('📜 Sotuvlar yo\'ch.', backKeyboard());
+//   }
+
+//   let msg = '📜 SOTUVLAR TARIXI\n\n';
+//   sales.forEach(s => {
+//     const c = DB.customers.find(c => c.id === s.customerId);
+//     const p = DB.products.find(p => p.id === s.productId);
+//     const payTypeMap = { cash: 'Naqd', card: 'Karta', debt: 'Nasiya', mixed: 'Aralash' };
+//     msg += `Sotuv ID: ${s.id}\n`;
+//     msg += `Mijoz: ${c?.name || '?'}\n`;
+//     msg += `Tunka: ${p?.name || '?'} ${p?.type || ''}\n`;
+//     msg += `Miqdor: ${fmtNum(s.quantity)} metr\n`;
+//     msg += `Jami: ${fmtSom(s.total)}\n`;
+//     msg += `USD: ${fmtUsd(s.usdAmount)}\n`;
+//     msg += `To'lov: ${payTypeMap[s.paymentType]}\n`;
+//     msg += `Sana: ${prettyDateTime(s.date)}\n\n`;
+//   });
+
+//   await ctx.reply(msg, backKeyboard());
+// }
+
+// // Admin uchun barcha sotuvlar
+// async function showAllSales(ctx) {
+//   if (!isAdmin(ctx)) return ctx.reply('❌ Bu bo\'lim faqat admin uchun.');
+//   clearState(ctx);
+//   const sales = DB.sales.filter(s => s.status === 'active').sort((a, b) => b.date.localeCompare(a.date)).slice(0, 30);
+
+//   if (sales.length === 0) {
+//     return ctx.reply('📜 Sotuvlar yo\'q.', backKeyboard());
+//   }
+
+//   let msg = '📜 BARCHA SOTUVLAR (oxirgi 30 ta)\n\n';
+//   const buttons = sales.map(s => {
+//     const c = DB.customers.find(c => c.id === s.customerId);
+//     return [Markup.button.callback(`🧾 ${s.id} - ${c?.name || '?'} - ${fmtNum(s.total)} so'm`, `saledetail_${s.id}`)];
+//   });
+//   buttons.push([Markup.button.callback('⬅️ Orqaga', 'home')]);
+//   await ctx.reply(msg, Markup.inlineKeyboard(buttons));
+// }
+
+// // Sotuv detallari
+// async function showSaleDetail(ctx, saleId) {
+//   const sale = DB.sales.find(s => s.id === saleId);
+//   if (!sale) return ctx.answerCbQuery('Sotuv topilmadi.');
+
+//   const c = DB.customers.find(c => c.id === sale.customerId);
+//   const p = DB.products.find(p => p.id === sale.productId);
+//   const u = DB.users.find(u => u.id === sale.userId);
+//   const payTypeMap = { cash: 'Naqd', card: 'Karta', debt: 'Nasiya', mixed: 'Aralash' };
+
+//   let msg = `Sotuv ID: ${sale.id}\n\n`;
+//   msg += `Mijoz: ${c?.name || '?'}\n`;
+//   msg += `Mijoz ID: ${c?.id || '-'}\n\n`;
+//   msg += `Tunka: ${p?.name || '?'} ${p?.type || ''}\n`;
+//   msg += `Miqdor: ${fmtNum(sale.quantity)} metr\n\n`;
+//   msg += `1 metr: ${fmtNum(sale.unitPrice)} so'm\n`;
+//   msg += `Qayta ishlash: ${sale.processingApplied ? `Ha (+${sale.processingPercent}%)` : 'Yo\'q'}\n\n`;
+//   msg += `Jami: ${fmtSom(sale.total)}\n`;
+//   msg += `USD: ${fmtUsd(sale.usdAmount)}\n`;
+//   msg += `Kurs: 1 USD = ${fmtNum(sale.exchangeRate)} so'm\n\n`;
+//   msg += `To'lov: ${payTypeMap[sale.paymentType]}\n`;
+//   msg += `To'langan: ${fmtSom(sale.paid)}\n`;
+//   msg += `Qarz: ${fmtSom(sale.debt)}\n\n`;
+//   msg += `Sotuvchi: ${u?.name || '?'}\n`;
+//   msg += `Sana: ${prettyDateTime(sale.date)}`;
+
+//   if (sale.status === 'cancelled') {
+//     msg += `\n\n❌ BEKOR QILINGAN\nBekor qilgan: ${sale.cancelledBy}\nSana: ${prettyDateTime(sale.cancelledAt)}`;
+//   }
+
+//   const buttons = [];
+//   if (isAdmin(ctx) && sale.status === 'active') {
+//     buttons.push([Markup.button.callback('🗑 Sotuvni bekor qilish', `salecancel_${sale.id}`)]);
+//   }
+//   buttons.push([Markup.button.callback('📄 PDF chek', `getpdf_${sale.id}`)]);
+//   buttons.push([Markup.button.callback('⬅️ Orqaga', 'allsales')]);
+
+//   await ctx.editMessageText(msg, Markup.inlineKeyboard(buttons));
+// }
+
+// // Sotuvni bekor qilish
+// async function cancelSaleConfirm(ctx, saleId) {
+//   if (!isAdmin(ctx)) return ctx.answerCbQuery('Faqat admin uchun.');
+//   const sale = DB.sales.find(s => s.id === saleId);
+//   if (!sale) return ctx.answerCbQuery('Sotuv topilmadi.');
+//   if (sale.status === 'cancelled') return ctx.answerCbQuery('Allaqachon bekor qilingan.');
+
+//   setState(ctx, { cancelSaleId: saleId });
+//   let msg = `⚠️ DIQQAT!\n\nBu sotuvni bekor qilsangiz:\n\n📦 Mahsulot qayta omborga qaytariladi.\n💰 Moliyaviy hisob qayta hisoblanadi.\n🔴 Nasiya bo'lsa qarz qayta hisoblanadi.\n\nDavom etasizmi?\n\nSotuv ID: ${sale.id}`;
+//   await ctx.editMessageText(msg, Markup.inlineKeyboard([
+//     [Markup.button.callback('✅ Ha, bekor qilish', `salecancelyes_${saleId}`)],
+//     [Markup.button.callback('❌ Yo\'q', `saledetail_${saleId}`)],
+//   ]));
+// }
+
+// async function cancelSaleExecute(ctx, saleId) {
+//   const sale = DB.sales.find(s => s.id === saleId);
+//   if (!sale) return ctx.answerCbQuery('Sotuv topilmadi.');
+//   if (sale.status === 'cancelled') return ctx.answerCbQuery('Allaqachon bekor qilingan.');
+
+//   const user = getUser(ctx);
+
+//   // 1. Mahsulotni omborga qaytarish
+//   returnStock(sale.productId, sale.quantity, user.id, sale.id);
+
+//   // 2. Qarzni bekor qilish (agar nasiya bo'lsa)
+//   if (sale.debt > 0) {
+//     const debt = DB.debts.find(d => d.saleId === saleId && d.status === 'active');
+//     if (debt) {
+//       debt.status = 'cancelled';
+//     }
+//   }
+
+//   // 3. To'lovni bekor qilish (agar bo'lsa)
+//   const payment = DB.payments.find(p => p.saleId === saleId);
+//   if (payment) {
+//     payment.status = 'cancelled';
+//   }
+
+//   // 4. Pul kiriminini bekor qilish
+//   const income = DB.income.find(i => i.note && i.note.includes(saleId));
+//   if (income) {
+//     income.status = 'cancelled';
+//   }
+
+//   // 5. Sotuv statusini o'zgartirish
+//   sale.status = 'cancelled';
+//   sale.cancelledBy = user.name;
+//   sale.cancelledAt = nowStr();
+//   sale.cancelReason = 'Admin tomonidan bekor qilindi';
+
+//   auditLog(user.id, 'Sotuv bekor qilindi', saleId, 'active', 'cancelled');
+//   save();
+
+//   let groupMsg = `🗑 SOTUV BEKOR QILINDI\n\nSotuv ID: ${saleId}\nBekor qilgan: ${user.name}\nSana: ${prettyDateTime(nowStr())}`;
+//   await sendToGroup(groupMsg);
+
+//   clearState(ctx);
+//   await ctx.editMessageText(`✅ Sotuv bekor qilindi.\n\nSotuv ID: ${saleId}\n📦 Mahsulot omborga qaytarildi.\n💰 Moliyaviy hisob qayta hisoblandi.`, inlineBack('home'));
+// }
+
+// // ============================================================
+// // CHEKLAR BO'LIMI
+// // ============================================================
+
+// async function showReceipts(ctx) {
+//   clearState(ctx);
+//   const user = getUser(ctx);
+//   const sales = DB.sales.filter(s => s.userId === user.id && s.status === 'active').sort((a, b) => b.date.localeCompare(a.date)).slice(0, 15);
+
+//   if (sales.length === 0) {
+//     return ctx.reply('🧾 Cheklar yo\'q.', backKeyboard());
+//   }
+
+//   const buttons = sales.map(s => {
+//     const c = DB.customers.find(c => c.id === s.customerId);
+//     return [Markup.button.callback(`🧾 ${s.id} - ${c?.name || '?'} - ${prettyDate(s.date.split(' ')[0])}`, `getpdf_${s.id}`)];
+//   });
+//   buttons.push([Markup.button.callback('⬅️ Orqaga', 'home')]);
+//   await ctx.reply('🧾 CHEKLAR\n\nChekni yuklash uchun bosing:', Markup.inlineKeyboard(buttons));
+// }
+
+// // PDF chek yuborish
+// async function sendReceipt(ctx, saleId) {
+//   const sale = DB.sales.find(s => s.id === saleId);
+//   if (!sale) return ctx.answerCbQuery('Sotuv topilmadi.');
+
+//   const customer = DB.customers.find(c => c.id === sale.customerId);
+//   const product = DB.products.find(p => p.id === sale.productId);
+//   const user = DB.users.find(u => u.id === sale.userId);
+
+//   try {
+//     const filepath = await generateReceipt(sale, customer, product, user?.name || '?', DB.settings);
+//     await ctx.replyWithDocument({ source: filepath, filename: `receipt_${saleId}.pdf` });
+//     await ctx.answerCbQuery('Chek yuborildi.');
+//   } catch (e) {
+//     console.error('PDF yuborishda xatolik:', e.message);
+//     await ctx.answerCbQuery('PDF yaratishda xatolik.');
+//   }
+// }
+
+// // ============================================================
+// // SOZLAMALAR
+// // ============================================================
+
+// async function showSettings(ctx) {
+//   if (!isAdmin(ctx)) return ctx.reply('❌ Bu bo\'lim faqat admin uchun.');
+//   clearState(ctx);
+//   let msg = `⚙️ SOZLAMALAR\n\n`;
+//   msg += `💵 Dollar kursi: 1 USD = ${fmtNum(DB.settings.dollarRate)} so'm\n`;
+//   msg += `⚠️ Minimal qoldiq: ${fmtNum(DB.settings.minStock)} metr\n`;
+//   msg += `🛠 Qayta ishlash foizi: ${DB.settings.processingPercent}%\n`;
+//   msg += `🕐 Timezone: ${DB.settings.timezone}\n`;
+//   msg += `🏭 Tashkilot nomi: ${DB.settings.orgName}\n`;
+//   if (DB.settings.phone) msg += `📞 Telefon: ${DB.settings.phone}\n`;
+//   if (DB.settings.address) msg += `📍 Manzil: ${DB.settings.address}\n`;
+
+//   const buttons = [
+//     [Markup.button.callback('💵 Dollar kursi', 'set_dollar'), Markup.button.callback('⚠️ Minimal qoldiq', 'set_minstock')],
+//     [Markup.button.callback('🛠 Qayta ishlash %', 'set_processing'), Markup.button.callback('🏭 Tashkilot nomi', 'set_orgname')],
+//     [Markup.button.callback('📞 Telefon', 'set_phone'), Markup.button.callback('📍 Manzil', 'set_address')],
+//     [Markup.button.callback('🧾 Chek sozlamalari', 'set_receipt')],
+//     [Markup.button.callback('👥 Ishchilar', 'set_workers')],
+//     [Markup.button.callback('💾 Backup', 'set_backup')],
+//     [Markup.button.callback('⬅️ Orqaga', 'home')],
+//   ];
+//   await ctx.reply(msg, Markup.inlineKeyboard(buttons));
+// }
+
+// // ============================================================
+// // ADMIN PANELI
+// // ============================================================
+
+// async function showAdminPanel(ctx) {
+//   if (!isAdmin(ctx)) return ctx.reply('❌ Bu bo\'lim faqat admin uchun.');
+//   clearState(ctx);
+//   let msg = `👑 ADMIN PANELI\n\n`;
+//   msg += `👥 Foydalanuvchilar: ${DB.users.length}\n`;
+//   msg += `📦 Mahsulotlar: ${DB.products.filter(p => p.status === 'active').length}\n`;
+//   msg += `🛒 Sotuvlar: ${DB.sales.length}\n`;
+//   msg += `👥 Mijozlar: ${DB.customers.length}\n`;
+//   msg += `🔴 Qarzlar: ${DB.debts.length}\n`;
+//   msg += `📥 Kirim: ${DB.income.length}\n`;
+//   msg += `📤 Chiqim: ${DB.expenses.length}\n`;
+//   msg += `📜 Audit log: ${DB.auditLogs.length}\n`;
+
+//   const buttons = [
+//     [Markup.button.callback('📦 Mahsulot qo\'shish', 'admin_addprod')],
+//     [Markup.button.callback('👥 Ishchilar', 'set_workers')],
+//     [Markup.button.callback('📥 Barcha sotuvlar', 'allsales')],
+//     [Markup.button.callback('📋 Audit log', 'admin_audit')],
+//     [Markup.button.callback('💾 Backup yaratish', 'admin_backup')],
+//     [Markup.button.callback('⬅️ Orqaga', 'home')],
+//   ];
+//   await ctx.reply(msg, Markup.inlineKeyboard(buttons));
+// }
+
+// // Audit log
+// async function showAuditLog(ctx) {
+//   if (!isAdmin(ctx)) return ctx.reply('❌ Bu bo\'lim faqat admin uchun.');
+//   const logs = DB.auditLogs.slice(-20).reverse();
+//   if (logs.length === 0) {
+//     return ctx.reply('📋 Audit log bo\'sh.', backKeyboard());
+//   }
+//   let msg = '📋 AUDIT LOG (oxirgi 20 ta)\n\n';
+//   logs.forEach(l => {
+//     const u = DB.users.find(u => u.id === l.userId);
+//     msg += `${prettyDateTime(l.date)}\n${u?.name || l.userId}\n${l.action}\nOb'ekt: ${l.object}\n`;
+//     if (l.prevValue) msg += `Oldingi: ${l.prevValue}\n`;
+//     if (l.newValue) msg += `Yangi: ${l.newValue}\n`;
+//     msg += '\n';
+//   });
+//   await ctx.reply(msg, backKeyboard());
+// }
+
+// // ============================================================
+// // ISHCHILARNI BOSHQARISH
+// // ============================================================
+
+// async function showWorkers(ctx) {
+//   if (!isAdmin(ctx)) return ctx.answerCbQuery('Faqat admin uchun.');
+//   const workers = DB.users.filter(u => u.role === 'worker');
+
+//   let msg = '👥 ISHCHILAR\n\n';
+//   if (workers.length === 0) {
+//     msg += 'Ishchilar yo\'q.';
+//   } else {
+//     workers.forEach(w => {
+//       msg += `${w.name}\nTelegram ID: ${w.telegramId}\nHolat: ${w.active ? '🟢 Faol' : '🔴 Nofaol'}\n\n`;
+//     });
+//   }
+
+//   const buttons = workers.map(w => [Markup.button.callback(`👤 ${w.name} ${w.active ? '🟢' : '🔴'}`, `worker_${w.id}`)]);
+//   buttons.push([Markup.button.callback('➕ Ishchi qo\'shish', 'addworker')]);
+//   buttons.push([Markup.button.callback('⬅️ Orqaga', 'settings')]);
+//   await ctx.editMessageText(msg, Markup.inlineKeyboard(buttons));
+// }
+
+// async function showWorkerDetail(ctx, workerId) {
+//   const worker = DB.users.find(u => u.id === workerId);
+//   if (!worker) return ctx.answerCbQuery('Ishchi topilmadi.');
+
+//   let msg = `👤 ${worker.name}\n\nTelegram ID: ${worker.telegramId}\nHolat: ${worker.active ? '🟢 Faol' : '🔴 Nofaol'}\n`;
+
+//   const buttons = [
+//     [Markup.button.callback(worker.active ? '🚫 Faolsizlantirish' : '🟢 Faollashtirish', `workertoggle_${worker.id}`)],
+//     [Markup.button.callback('✏️ Tahrirlash', `workeredit_${worker.id}`)],
+//     [Markup.button.callback('🗑 O\'chirish', `workerdelete_${worker.id}`)],
+//     [Markup.button.callback('⬅️ Orqaga', 'set_workers')],
+//   ];
+//   await ctx.editMessageText(msg, Markup.inlineKeyboard(buttons));
+// }
+
+// // Ishchi qo'shish
+// async function addWorkerStart(ctx) {
+//   setState(ctx, { step: 'add_worker_name' });
+//   await ctx.reply('👤 Ishchi ismi:\n\nMasalan: ISHCHI 1', cancelKeyboard());
+// }
+
+// // ============================================================
+// // BACKUP BO'LIMI
+// // ============================================================
+
+// async function showBackupMenu(ctx) {
+//   if (!isAdmin(ctx)) return ctx.answerCbQuery('Faqat admin uchun.');
+//   const backups = listBackups().slice(0, 10);
+//   let msg = '💾 BACKUP\n\n';
+//   if (backups.length === 0) {
+//     msg += 'Backuplar yo\'q.';
+//   } else {
+//     backups.forEach(b => {
+//       msg += `📁 ${b.filename}\n${prettyDateTime(b.date)} - ${fmtNum(b.size)} bayt\n\n`;
+//     });
+//   }
+//   const buttons = [
+//     [Markup.button.callback('💾 Backup yaratish', 'backup_create')],
+//   ];
+//   if (backups.length > 0) {
+//     buttons.push([Markup.button.callback('📋 Backup tarixi', 'backup_list')]);
+//   }
+//   buttons.push([Markup.button.callback('⬅️ Orqaga', 'settings')]);
+//   await ctx.editMessageText(msg, Markup.inlineKeyboard(buttons));
+// }
+
+// async function createBackupNow(ctx) {
+//   const result = createBackup(DB);
+//   if (!result) return ctx.answerCbQuery('Backup yaratishda xatolik.');
+
+//   const bId = nextId('BKP');
+//   DB.backups.push({ id: bId, filename: result.filename, date: result.date, size: result.size });
+//   save();
+
+//   // Guruhga yuborish
+//   if (PRIVATE_GROUP_ID) {
+//     try {
+//       await bot.telegram.sendDocument(PRIVATE_GROUP_ID, {
+//         source: result.filepath,
+//         filename: result.filename,
+//       });
+//     } catch (e) {
+//       console.error('Backup guruhga yuborishda xatolik:', e.message);
+//     }
+//   }
+
+//   await ctx.answerCbQuery('Backup yaratildi.');
+//   await ctx.reply(`✅ Backup yaratildi.\n\n📁 ${result.filename}`, Markup.inlineKeyboard([[Markup.button.callback('⬅️ Orqaga', 'set_backup')]]));
+// }
+
+// async function showBackupList(ctx) {
+//   if (!isAdmin(ctx)) return ctx.answerCbQuery('Faqat admin uchun.');
+//   const backups = listBackups().slice(0, 15);
+//   if (backups.length === 0) {
+//     return ctx.editMessageText('Backuplar yo\'q.', inlineBack('set_backup'));
+//   }
+//   const buttons = backups.map(b => [Markup.button.callback(`📁 ${b.filename}`, `backuprestore_${b.filename}`)]);
+//   buttons.push([Markup.button.callback('⬅️ Orqaga', 'set_backup')]);
+//   await ctx.editMessageText('📋 BACKUP TARIXI\n\nTiklash uchun tanlang:', Markup.inlineKeyboard(buttons));
+// }
+
+// async function confirmRestoreBackup(ctx, filename) {
+//   setState(ctx, { restoreBackup: filename });
+//   await ctx.editMessageText(
+//     `⚠️ DIQQAT!\n\nEski ma'lumotlar backup bilan almashtiriladi.\n\nBackup: ${filename}\n\nDavom etasizmi?`,
+//     Markup.inlineKeyboard([
+//       [Markup.button.callback('✅ Ha, tiklash', `backuprestoreyes_${filename}`)],
+//       [Markup.button.callback('❌ Yo\'q', 'set_backup')],
+//     ])
+//   );
+// }
+
+// async function restoreBackupNow(ctx, filename) {
+//   const data = readBackupFile(filename);
+//   if (!data) return ctx.answerCbQuery('Backup buzilgan yoki topilmadi.');
+
+//   // Avval joriy holatni backup qilish
+//   createBackup(DB);
+
+//   DB = data;
+//   save();
+
+//   await ctx.editMessageText(`✅ Backup tiklandi.\n\n📁 ${filename}`, inlineBack('home'));
+// }
+
+// // ============================================================
+// // TEXT MESSAGE HANDLER (state-based)
+// // ============================================================
+
+// bot.on('text', async (ctx) => {
+//   if (!isAuthorized(ctx)) return;
+//   const text = ctx.message.text;
+//   const st = getState(ctx);
+
+//   // Agar state bo'sh bo'lsa — menyu tugmalari
+//   if (!st.step) {
+//     return handleMenuText(ctx, text);
+//   }
+
+//   // Bekor qilish
+//   if (text === '❌ Bekor qilish' || text === '⬅️ Orqaga' || text === '🏠 Bosh menyu') {
+//     clearState(ctx);
+//     return showMenu(ctx);
+//   }
+
+//   try {
+//     switch (st.step) {
+//       // === SOTUV: YANGI MIJOZ ===
+//       case 'sale_new_customer_name':
+//         if (!isNonEmptyStr(text)) return ctx.reply('❌ Ism bo\'sh bo\'lmasin.', cancelKeyboard());
+//         setState(ctx, { step: 'sale_new_customer_phone', newCustName: text.trim() });
+//         return ctx.reply('📞 Telefon raqami:\n\nMasalan: +998901234567\n\nYoki "-" deb o\'tkazib yuboring:', cancelKeyboard());
+
+//       case 'sale_new_customer_phone': {
+//         let phone = text.trim();
+//         if (phone === '-') phone = '';
+//         setState(ctx, { step: 'sale_new_customer_note', newCustPhone: phone });
+//         return ctx.reply('📝 Izoh:\n\nYoki "-" deb o\'tkazib yuboring:', cancelKeyboard());
+//       }
+
+//       case 'sale_new_customer_note': {
+//         let note = text.trim();
+//         if (note === '-') note = '';
+//         const cId = nextId('CUST');
+//         const customer = {
+//           id: cId,
+//           name: st.newCustName,
+//           phone: st.newCustPhone,
+//           note,
+//           telegramId: null,
+//           createdAt: nowStr(),
+//           status: 'active',
+//         };
+//         DB.customers.push(customer);
+//         save();
+//         auditLog(getUser(ctx).id, 'Yangi mijoz', cId, '', st.newCustName);
+//         await ctx.reply(`✅ Mijoz qo'shildi: ${st.newCustName} (${cId})`);
+//         // Sotuvga davom etish — tunka tanlash
+//         return saleSelectProduct(ctx, cId);
+//       }
+
+//       // === SOTUV: METR KIRITISH ===
+//       case 'sale_quantity': {
+//         if (!isPositiveNumber(text)) return ctx.reply('❌ Noto\'g\'ri miqdor.\n\nMasalan: 20\n\nManfiy son va harf kiritmang.', cancelKeyboard());
+//         const qty = Number(text);
+//         const product = DB.products.find(p => p.id === st.saleProductId);
+//         const stockQty = getStockQuantity(st.saleProductId);
+//         if (qty > stockQty) {
+//           return ctx.reply(`❌ Omborda yetarli mahsulot yo\'q.\n\nOmborda: ${fmtNum(stockQty)} metr\nSiz so\'radi: ${fmtNum(qty)} metr`, cancelKeyboard());
+//         }
+//         setState(ctx, { saleQuantity: qty });
+//         return saleSelectProcessing(ctx);
+//       }
+
+//       // === ARALASH TO'LOV: NAQD ===
+//       case 'sale_mixed_cash': {
+//         if (!isNonNegativeNumber(text)) return ctx.reply('❌ Noto\'g\'ri summa.', cancelKeyboard());
+//         const cash = Number(text);
+//         const st2 = getState(ctx);
+//         if (cash > st2.saleTotal) return ctx.reply(`❌ Naqd summa jami summadan ko'p.\n\nJami: ${fmtSom(st2.saleTotal)}`, cancelKeyboard());
+//         setState(ctx, { saleMixedCash: cash });
+//         return saleMixedCard(ctx);
+//       }
+
+//       // === ARALASH TO'LOV: KARTA ===
+//       case 'sale_mixed_card': {
+//         if (!isNonNegativeNumber(text)) return ctx.reply('❌ Noto\'g\'ri summa.', cancelKeyboard());
+//         const card = Number(text);
+//         const st2 = getState(ctx);
+//         const cash = st2.saleMixedCash || 0;
+//         const remaining = st2.saleTotal - cash - card;
+//         if (remaining < 0) return ctx.reply(`❌ Naqd + Karta jami summadan ko'p.\n\nJami: ${fmtSom(st2.saleTotal)}`, cancelKeyboard());
+//         // Qolgan nasiya
+//         const mixedPayments = { cash, card, debt: remaining };
+//         return confirmSale(ctx, 'mixed', mixedPayments);
+//       }
+
+//       // === YANGI MIJOZ (menyudan) ===
+//       case 'new_customer_name':
+//         if (!isNonEmptyStr(text)) return ctx.reply('❌ Ism bo\'sh bo\'lmasin.', cancelKeyboard());
+//         setState(ctx, { step: 'new_customer_phone', newCustName: text.trim() });
+//         return ctx.reply('📞 Telefon raqami:\n\nYoki "-" deb o\'tkazib yuboring:', cancelKeyboard());
+
+//       case 'new_customer_phone': {
+//         let phone = text.trim();
+//         if (phone === '-') phone = '';
+//         setState(ctx, { step: 'new_customer_note', newCustPhone: phone });
+//         return ctx.reply('📝 Izoh:\n\nYoki "-" deb o\'tkazib yuboring:', cancelKeyboard());
+//       }
+
+//       case 'new_customer_note': {
+//         let note = text.trim();
+//         if (note === '-') note = '';
+//         const cId = nextId('CUST');
+//         DB.customers.push({
+//           id: cId,
+//           name: st.newCustName,
+//           phone: st.newCustPhone,
+//           note,
+//           telegramId: null,
+//           createdAt: nowStr(),
+//           status: 'active',
+//         });
+//         save();
+//         auditLog(getUser(ctx).id, 'Yangi mijoz', cId, '', st.newCustName);
+//         clearState(ctx);
+//         return ctx.reply(`✅ Mijoz qo'shildi.\n\n👤 ${st.newCustName}\nID: ${cId}`, homeKeyboard(ctx));
+//       }
+
+//       // === QARZ TO'LASH ===
+//       case 'pay_debt': {
+//         if (!isPositiveNumber(text)) return ctx.reply('❌ Noto\'g\'ri summa.\n\nMasalan: 500000', cancelKeyboard());
+//         return payDebtSave(ctx, Number(text));
+//       }
+
+//       // === NASIYA QO'SHISH ===
+//       case 'add_debt': {
+//         if (!isPositiveNumber(text)) return ctx.reply('❌ Noto\'g\'ri summa.\n\nMasalan: 2000000', cancelKeyboard());
+//         return addDebtSave(ctx, Number(text));
+//       }
+
+//       // === TUNKA KIRIMI: RULON RAQAMI ===
+//       case 'stock_in_roll': {
+//         if (!isNonEmptyStr(text)) return ctx.reply('❌ Rulon raqami bo\'sh bo\'lmasin.', cancelKeyboard());
+//         setState(ctx, { step: 'stock_in_qty', stockInRoll: text.trim() });
+//         return ctx.reply('📦 Necha metr kirdi?\n\nMasalan: 1000', cancelKeyboard());
+//       }
+
+//       case 'stock_in_qty': {
+//         if (!isPositiveNumber(text)) return ctx.reply('❌ Noto\'g\'ri miqdor.', cancelKeyboard());
+//         setState(ctx, { step: 'stock_in_price', stockInQty: Number(text) });
+//         return ctx.reply('💰 1 metr narxi:\n\nMasalan: 62000', cancelKeyboard());
+//       }
+
+//       case 'stock_in_price': {
+//         if (!isPositiveNumber(text)) return ctx.reply('❌ Noto\'g\'ri narx.', cancelKeyboard());
+//         setState(ctx, { step: 'stock_in_note', stockInPrice: Number(text) });
+//         return ctx.reply('📝 Izoh:\n\nYoki "-" deb o\'tkazib yuboring:', cancelKeyboard());
+//       }
+
+//       case 'stock_in_note': {
+//         let note = text.trim();
+//         if (note === '-') note = '';
+//         const user = getUser(ctx);
+//         const product = DB.products.find(p => p.id === st.stockInProductId);
+//         if (!product) {
+//           clearState(ctx);
+//           return ctx.reply('❌ Mahsulot topilmadi.', homeKeyboard(ctx));
+//         }
+
+//         const rollId = nextId('ROLL');
+//         const rollNumber = st.stockInRoll;
+//         DB.rolls.push({
+//           id: rollId,
+//           productId: product.id,
+//           rollNumber,
+//           quantity: st.stockInQty,
+//           remaining: st.stockInQty,
+//           unitPrice: st.stockInPrice,
+//           date: nowStr(),
+//           note,
+//         });
+
+//         addStock(product.id, st.stockInQty, rollId, note, user.id);
+//         auditLog(user.id, 'Tunka kirimi', product.id, '', `+${fmtNum(st.stockInQty)} metr - Rulon: ${rollNumber}`);
+//         save();
+
+//         let groupMsg = `📥 TUNKA KIRIMI\n\n${product.name} ${product.type}\nRulon: ${rollNumber}\n+${fmtNum(st.stockInQty)} metr\n${fmtNum(st.stockInPrice)} so'm/metr\nJami: ${fmtSom(st.stockInQty * st.stockInPrice)}\nKiritgan: ${user.name}\nSana: ${prettyDateTime(nowStr())}`;
+//         await sendToGroup(groupMsg);
+
+//         clearState(ctx);
+//         let msg = `✅ Tunka kirimi saqlandi.\n\n`;
+//         msg += `🏭 ${product.name} ${product.type}\n`;
+//         msg += `📦 Rulon: ${rollNumber}\n`;
+//         msg += `📦 +${fmtNum(st.stockInQty)} metr\n`;
+//         msg += `💰 ${fmtNum(st.stockInPrice)} so'm/metr\n`;
+//         msg += `💵 Jami: ${fmtSom(st.stockInQty * st.stockInPrice)}\n`;
+//         msg += `📦 Yangi qoldiq: ${fmtNum(getStockQuantity(product.id))} metr`;
+//         return ctx.reply(msg, homeKeyboard(ctx));
+//       }
+
+//       // === YANGI TUNKA QO'SHISH ===
+//       case 'new_product_name':
+//         if (!isNonEmptyStr(text)) return ctx.reply('❌ Nomi bo\'sh bo\'lmasin.', cancelKeyboard());
+//         setState(ctx, { step: 'new_product_type', newProdName: text.trim() });
+//         return ctx.reply('📏 Turi/qalinligi:\n\nMasalan: 0.45', cancelKeyboard());
+
+//       case 'new_product_type':
+//         if (!isNonEmptyStr(text)) return ctx.reply('❌ Turi bo\'sh bo\'lmasin.', cancelKeyboard());
+//         setState(ctx, { step: 'new_product_color', newProdType: text.trim() });
+//         return ctx.reply('🎨 Rangi:\n\nYoki "-" deb o\'tkazib yuboring:', cancelKeyboard());
+
+//       case 'new_product_color': {
+//         let color = text.trim();
+//         if (color === '-') color = '';
+//         setState(ctx, { step: 'new_product_qty', newProdColor: color });
+//         return ctx.reply('📦 Boshlang\'ich metr:\n\nMasalan: 1000', cancelKeyboard());
+//       }
+
+//       case 'new_product_qty': {
+//         if (!isNonNegativeNumber(text)) return ctx.reply('❌ Noto\'g\'ri miqdor.', cancelKeyboard());
+//         setState(ctx, { step: 'new_product_price', newProdQty: Number(text) });
+//         return ctx.reply('💰 1 metr narxi:\n\nMasalan: 62000', cancelKeyboard());
+//       }
+
+//       case 'new_product_price': {
+//         if (!isPositiveNumber(text)) return ctx.reply('❌ Noto\'g\'ri narx.', cancelKeyboard());
+//         setState(ctx, { step: 'new_product_minstock', newProdPrice: Number(text) });
+//         return ctx.reply('⚠️ Minimal qoldiq:\n\nMasalan: 100', cancelKeyboard());
+//       }
+
+//       case 'new_product_minstock': {
+//         if (!isNonNegativeNumber(text)) return ctx.reply('❌ Noto\'g\'ri miqdor.', cancelKeyboard());
+//         setState(ctx, { step: 'new_product_note', newProdMinStock: Number(text) });
+//         return ctx.reply('📝 Izoh:\n\nYoki "-" deb o\'tkazib yuboring:', cancelKeyboard());
+//       }
+
+//       case 'new_product_note': {
+//         let note = text.trim();
+//         if (note === '-') note = '';
+//         const user = getUser(ctx);
+//         const pId = nextId('PROD');
+//         const product = {
+//           id: pId,
+//           name: st.newProdName,
+//           type: st.newProdType,
+//           color: st.newProdColor,
+//           unitPrice: st.newProdPrice,
+//           minStock: st.newProdMinStock,
+//           status: 'active',
+//           createdAt: nowStr(),
+//           note,
+//         };
+//         DB.products.push(product);
+
+//         // Rulon yaratish
+//         if (st.newProdQty > 0) {
+//           const rollId = nextId('ROLL');
+//           DB.rolls.push({
+//             id: rollId,
+//             productId: pId,
+//             rollNumber: '001',
+//             quantity: st.newProdQty,
+//             remaining: st.newProdQty,
+//             unitPrice: st.newProdPrice,
+//             date: nowStr(),
+//             note: 'Boshlang\'ich kirim',
+//           });
+//           addStock(pId, st.newProdQty, rollId, 'Boshlang\'ich kirim', user.id);
+//         }
+
+//         auditLog(user.id, 'Yangi mahsulot', pId, '', `${product.name} ${product.type}`);
+//         save();
+
+//         let groupMsg = `🏭 YANGI TUNKA\n\n${product.name} ${product.type}\nBoshlang'ich: ${fmtNum(st.newProdQty)} metr\nNarx: ${fmtNum(product.unitPrice)} so'm\nQo'shgan: ${user.name}\nSana: ${prettyDateTime(nowStr())}`;
+//         await sendToGroup(groupMsg);
+
+//         clearState(ctx);
+//         let msg = `✅ Tunka qo'shildi.\n\n`;
+//         msg += `🏭 ${product.name} ${product.type}\n`;
+//         if (product.color) msg += `🎨 ${product.color}\n`;
+//         msg += `📦 ${fmtNum(st.newProdQty)} metr\n`;
+//         msg += `💰 ${fmtNum(product.unitPrice)} so'm/metr\n`;
+//         msg += `⚠️ Minimal qoldiq: ${fmtNum(product.minStock)} metr\n`;
+//         msg += `ID: ${pId}`;
+//         return ctx.reply(msg, homeKeyboard(ctx));
+//       }
+
+//       // === PUL KIRIMI ===
+//       case 'income_amount': {
+//         if (!isPositiveNumber(text)) return ctx.reply('❌ Noto\'g\'ri summa.', cancelKeyboard());
+//         const user = getUser(ctx);
+//         const incId = nextId('INC');
+//         DB.income.push({
+//           id: incId,
+//           source: st.incomeSource || 'Boshqa',
+//           customerId: st.incomeCustomerId || null,
+//           amount: Number(text),
+//           note: st.incomeNote || '',
+//           userId: user.id,
+//           date: nowStr(),
+//         });
+//         auditLog(user.id, 'Pul kirimi', incId, '', fmtSom(Number(text)));
+//         save();
+//         clearState(ctx);
+//         return ctx.reply(`✅ Pul kirimi saqlandi.\n\nManba: ${st.incomeSource || 'Boshqa'}\nSumma: ${fmtSom(Number(text))}`, homeKeyboard(ctx));
+//       }
+
+//       case 'income_note':
+//         setState(ctx, { step: 'income_amount', incomeNote: text.trim() });
+//         return ctx.reply('💰 Summa:\n\nMasalan: 500000', cancelKeyboard());
+
+//       // === CHIQIM ===
+//       case 'expense_amount': {
+//         if (!isPositiveNumber(text)) return ctx.reply('❌ Noto\'g\'ri summa.', cancelKeyboard());
+//         const user = getUser(ctx);
+//         const expId = nextId('EXP');
+//         DB.expenses.push({
+//           id: expId,
+//           type: st.expenseType,
+//           amount: Number(text),
+//           note: st.expenseNote || '',
+//           userId: user.id,
+//           date: nowStr(),
+//         });
+//         auditLog(user.id, 'Chiqim', expId, '', `${st.expenseType}: ${fmtSom(Number(text))}`);
+//         save();
+//         let groupMsg = `📤 CHIQIM\n\nTur: ${st.expenseType}\nSumma: ${fmtSom(Number(text))}\nKim: ${user.name}\nSana: ${prettyDateTime(nowStr())}`;
+//         await sendToGroup(groupMsg);
+//         clearState(ctx);
+//         return ctx.reply(`✅ Chiqim saqlandi.\n\nTur: ${st.expenseType}\nSumma: ${fmtSom(Number(text))}`, homeKeyboard(ctx));
+//       }
+
+//       case 'expense_note':
+//         setState(ctx, { step: 'expense_amount', expenseNote: text.trim() });
+//         return ctx.reply('💰 Summa:\n\nMasalan: 1200000', cancelKeyboard());
+
+//       // === KUNLIK HISOBOT SANA ===
+//       case 'daily_report_date': {
+//         let dateStr;
+//         if (text.trim().toLowerCase() === 'bugun') {
+//           dateStr = todayStr();
+//         } else {
+//           // DD.MM.YYYY -> YYYY-MM-DD
+//           const m = text.trim().match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+//           if (!m) return ctx.reply('❌ Sana noto\'g\'ri.\n\nMasalan: 11.09.2026', cancelKeyboard());
+//           dateStr = `${m[3]}-${m[2]}-${m[1]}`;
+//         }
+//         return showDailyReport(ctx, dateStr);
+//       }
+
+//       // === OYLIK HISOBOT ===
+//       case 'monthly_report': {
+//         let mStr;
+//         if (text.trim().toLowerCase() === 'shuoy') {
+//           mStr = monthStr();
+//         } else {
+//           const m = text.trim().match(/^(\d{4})-(\d{2})$/);
+//           if (!m) return ctx.reply('❌ Oy noto\'g\'ri.\n\nMasalan: 2026-09', cancelKeyboard());
+//           mStr = `${m[1]}-${m[2]}`;
+//         }
+//         return showMonthlyReport(ctx, mStr);
+//       }
+
+//       // === SOZLAMALAR ===
+//       case 'set_dollar_value': {
+//         if (!isPositiveNumber(text)) return ctx.reply('❌ Noto\'g\'ri kurs.', cancelKeyboard());
+//         const old = DB.settings.dollarRate;
+//         DB.settings.dollarRate = Number(text);
+//         save();
+//         auditLog(getUser(ctx).id, 'Dollar kursi o\'zgartirildi', 'settings', old, text);
+//         clearState(ctx);
+//         return ctx.reply(`✅ Dollar kursi o'zgartirildi.\n\n1 USD = ${fmtNum(DB.settings.dollarRate)} so'm`, homeKeyboard(ctx));
+//       }
+
+//       case 'set_minstock_value': {
+//         if (!isNonNegativeNumber(text)) return ctx.reply('❌ Noto\'g\'ri miqdor.', cancelKeyboard());
+//         const old = DB.settings.minStock;
+//         DB.settings.minStock = Number(text);
+//         save();
+//         auditLog(getUser(ctx).id, 'Minimal qoldiq o\'zgartirildi', 'settings', old, text);
+//         clearState(ctx);
+//         return ctx.reply(`✅ Minimal qoldiq: ${fmtNum(DB.settings.minStock)} metr`, homeKeyboard(ctx));
+//       }
+
+//       case 'set_processing_value': {
+//         if (!isNonNegativeNumber(text)) return ctx.reply('❌ Noto\'g\'ri foiz.', cancelKeyboard());
+//         const old = DB.settings.processingPercent;
+//         DB.settings.processingPercent = Number(text);
+//         save();
+//         auditLog(getUser(ctx).id, 'Qayta ishlash foizi o\'zgartirildi', 'settings', old, text);
+//         clearState(ctx);
+//         return ctx.reply(`✅ Qayta ishlash foizi: ${DB.settings.processingPercent}%`, homeKeyboard(ctx));
+//       }
+
+//       case 'set_orgname_value': {
+//         if (!isNonEmptyStr(text)) return ctx.reply('❌ Nomi bo\'sh bo\'lmasin.', cancelKeyboard());
+//         DB.settings.orgName = text.trim();
+//         save();
+//         clearState(ctx);
+//         return ctx.reply(`✅ Tashkilot nomi: ${DB.settings.orgName}`, homeKeyboard(ctx));
+//       }
+
+//       case 'set_phone_value': {
+//         DB.settings.phone = text.trim();
+//         save();
+//         clearState(ctx);
+//         return ctx.reply(`✅ Telefon: ${DB.settings.phone}`, homeKeyboard(ctx));
+//       }
+
+//       case 'set_address_value': {
+//         DB.settings.address = text.trim();
+//         save();
+//         clearState(ctx);
+//         return ctx.reply(`✅ Manzil: ${DB.settings.address}`, homeKeyboard(ctx));
+//       }
+
+//       case 'set_receipt_footer': {
+//         DB.settings.receiptFooter = text.trim();
+//         save();
+//         clearState(ctx);
+//         return ctx.reply(`✅ Chek matni: ${DB.settings.receiptFooter}`, homeKeyboard(ctx));
+//       }
+
+//       // === ISHCHI QO'SHISH ===
+//       case 'add_worker_name':
+//         if (!isNonEmptyStr(text)) return ctx.reply('❌ Ism bo\'sh bo\'lmasin.', cancelKeyboard());
+//         setState(ctx, { step: 'add_worker_id', newWorkerName: text.trim() });
+//         return ctx.reply(' Telegram ID:\n\nIshchining Telegram ID raqamini kiriting.\n(Buni ishchi @userinfobot ga yozib bilishi mumkin)', cancelKeyboard());
+
+//       case 'add_worker_id': {
+//         const tid = parseInt(text.trim(), 10);
+//         if (!tid || isNaN(tid)) return ctx.reply('❌ Noto\'g\'ri Telegram ID.\n\nFaqat raqam bo\'lishi kerak.', cancelKeyboard());
+//         if (DB.users.some(u => u.telegramId === tid)) return ctx.reply('❌ Bu ID allaqachon mavjud.', cancelKeyboard());
+//         if (tid === ADMIN_ID) return ctx.reply('❌ Bu ID admin.', cancelKeyboard());
+//         const uId = nextId('USR');
+//         DB.users.push({
+//           id: uId,
+//           role: 'worker',
+//           telegramId: tid,
+//           name: st.newWorkerName,
+//           active: true,
+//         });
+//         save();
+//         auditLog(getUser(ctx).id, 'Ishchi qo\'shildi', uId, '', st.newWorkerName);
+//         clearState(ctx);
+//         return ctx.reply(`✅ Ishchi qo'shildi.\n\n👤 ${st.newWorkerName}\nTelegram ID: ${tid}`, homeKeyboard(ctx));
+//       }
+
+//       // === ISHCHINI TAHRIRLASH ===
+//       case 'edit_worker_name':
+//         if (!isNonEmptyStr(text)) return ctx.reply('❌ Ism bo\'sh bo\'lmasin.', cancelKeyboard());
+//         setState(ctx, { step: 'edit_worker_id', editWorkerName: text.trim() });
+//         return ctx.reply(' Telegram ID:\n\nYoki eski ID qolsin bo\'lsa "-" yozing:', cancelKeyboard());
+
+//       case 'edit_worker_id': {
+//         const worker = DB.users.find(u => u.id === st.editWorkerId);
+//         if (!worker) { clearState(ctx); return ctx.reply('❌ Ishchi topilmadi.', homeKeyboard(ctx)); }
+//         if (text.trim() !== '-') {
+//           const tid = parseInt(text.trim(), 10);
+//           if (!tid || isNaN(tid)) return ctx.reply('❌ Noto\'g\'ri Telegram ID.', cancelKeyboard());
+//           if (DB.users.some(u => u.telegramId === tid && u.id !== worker.id)) return ctx.reply('❌ Bu ID allaqachon mavjud.', cancelKeyboard());
+//           worker.telegramId = tid;
+//         }
+//         worker.name = st.editWorkerName;
+//         save();
+//         auditLog(getUser(ctx).id, 'Ishchi tahrirlandi', worker.id, '', worker.name);
+//         clearState(ctx);
+//         return ctx.reply(`✅ Ishchi tahrirlandi.\n\n👤 ${worker.name}\nTelegram ID: ${worker.telegramId}`, homeKeyboard(ctx));
+//       }
+
+//       // === MAHSULOT TAHRIRLASH ===
+//       case 'edit_product_price': {
+//         if (!isPositiveNumber(text)) return ctx.reply('❌ Noto\'g\'ri narx.', cancelKeyboard());
+//         const product = DB.products.find(p => p.id === st.editProductId);
+//         if (!product) { clearState(ctx); return ctx.reply('❌ Mahsulot topilmadi.', homeKeyboard(ctx)); }
+//         const old = product.unitPrice;
+//         product.unitPrice = Number(text);
+//         save();
+//         auditLog(getUser(ctx).id, 'Mahsulot narxi o\'zgartirildi', product.id, old, text);
+//         clearState(ctx);
+//         return ctx.reply(`✅ Narx o'zgartirildi.\n\n🏭 ${product.name} ${product.type}\n💰 ${fmtNum(product.unitPrice)} so'm`, homeKeyboard(ctx));
+//       }
+
+//       case 'edit_product_minstock': {
+//         if (!isNonNegativeNumber(text)) return ctx.reply('❌ Noto\'g\'ri miqdor.', cancelKeyboard());
+//         const product = DB.products.find(p => p.id === st.editProductId);
+//         if (!product) { clearState(ctx); return ctx.reply('❌ Mahsulot topilmadi.', homeKeyboard(ctx)); }
+//         product.minStock = Number(text);
+//         save();
+//         clearState(ctx);
+//         return ctx.reply(`✅ Minimal qoldiq o'zgartirildi.\n\n🏭 ${product.name} ${product.type}\n⚠️ ${fmtNum(product.minStock)} metr`, homeKeyboard(ctx));
+//       }
+
+//       case 'edit_product_name': {
+//         if (!isNonEmptyStr(text)) return ctx.reply('❌ Nomi bo\'sh bo\'lmasin.', cancelKeyboard());
+//         const product = DB.products.find(p => p.id === st.editProductId);
+//         if (!product) { clearState(ctx); return ctx.reply('❌ Mahsulot topilmadi.', homeKeyboard(ctx)); }
+//         const old = product.name;
+//         product.name = text.trim();
+//         save();
+//         clearState(ctx);
+//         return ctx.reply(`✅ Nomi o'zgartirildi.\n\n🏭 ${product.name} ${product.type}`, homeKeyboard(ctx));
+//       }
+
+//       case 'edit_product_type': {
+//         if (!isNonEmptyStr(text)) return ctx.reply('❌ Turi bo\'sh bo\'lmasin.', cancelKeyboard());
+//         const product = DB.products.find(p => p.id === st.editProductId);
+//         if (!product) { clearState(ctx); return ctx.reply('❌ Mahsulot topilmadi.', homeKeyboard(ctx)); }
+//         product.type = text.trim();
+//         save();
+//         clearState(ctx);
+//         return ctx.reply(`✅ Turi o'zgartirildi.\n\n🏭 ${product.name} ${product.type}`, homeKeyboard(ctx));
+//       }
+
+//       // === MIJOZ TAHRIRLASH ===
+//       case 'edit_customer_name': {
+//         if (!isNonEmptyStr(text)) return ctx.reply('❌ Ism bo\'sh bo\'lmasin.', cancelKeyboard());
+//         const c = DB.customers.find(c => c.id === st.editCustomerId);
+//         if (!c) { clearState(ctx); return ctx.reply('❌ Mijoz topilmadi.', homeKeyboard(ctx)); }
+//         c.name = text.trim();
+//         save();
+//         clearState(ctx);
+//         return ctx.reply(`✅ Mijoz nomi o'zgartirildi.\n\n👤 ${c.name}`, homeKeyboard(ctx));
+//       }
+
+//       case 'edit_customer_phone': {
+//         const c = DB.customers.find(c => c.id === st.editCustomerId);
+//         if (!c) { clearState(ctx); return ctx.reply('❌ Mijoz topilmadi.', homeKeyboard(ctx)); }
+//         let phone = text.trim();
+//         if (phone === '-') phone = '';
+//         c.phone = phone;
+//         save();
+//         clearState(ctx);
+//         return ctx.reply(`✅ Telefon o'zgartirildi.\n\n📞 ${c.phone || '-'}`, homeKeyboard(ctx));
+//       }
+
+//       default:
+//         clearState(ctx);
+//         return showMenu(ctx);
+//     }
+//   } catch (e) {
+//     console.error('Text handler xatolik:', e.message);
+//     clearState(ctx);
+//     return ctx.reply('❌ Xatolik yuz berdi. Ma\'lumot saqlanmadi. Iltimos, qaytadan urinib ko\'ring.', homeKeyboard(ctx));
+//   }
+// });
+
+// // Menyu matnlarini boshqarish
+// async function handleMenuText(ctx, text) {
+//   switch (text) {
+//     case '📦 Ombor': return showWarehouse(ctx);
+//     case '🛒 Sotuv qilish': return startSale(ctx);
+//     case '👥 Mijozlar': return showCustomers(ctx);
+//     case '🔴 Qarzdorlar': return showDebtors(ctx);
+//     case '📥 Tunka kirimi': return startStockIn(ctx);
+//     case '💰 Pul kirimi': return startIncome(ctx);
+//     case '📤 Chiqim': return startExpense(ctx);
+//     case '📊 Kunlik hisobot': return dailyReportStart(ctx);
+//     case '📅 Oylik hisobot': return monthlyReportStart(ctx);
+//     case '📜 Tarix': return showHistory(ctx);
+//     case '🧾 Cheklar': return showReceipts(ctx);
+//     case '⚙️ Sozlamalar': return showSettings(ctx);
+//     case '👑 Admin paneli': return showAdminPanel(ctx);
+//     case '🧾 Mening cheklarim': return showReceipts(ctx);
+//     case '📜 Mening sotuvlarim': return showMySales(ctx);
+//     case '⬅️ Orqaga':
+//     case '🏠 Bosh menyu':
+//       return showMenu(ctx);
+//     default:
+//       return ctx.reply('Tanlangan tugma topilmadi. Bosh menyu uchun /menu bosing.');
+//   }
+// }
+
+// // ============================================================
+// // CALLBACK QUERY HANDLER
+// // ============================================================
+
+// bot.on('callback_query', async (ctx) => {
+//   if (!isAuthorized(ctx)) return ctx.answerCbQuery('Huquq yo\'q.');
+//   const data = ctx.callbackQuery.data;
+//   const st = getState(ctx);
+
+//   try {
+//     // Umumiy callbacklar
+//     if (data === 'home') { clearState(ctx); await ctx.deleteMessage().catch(() => {}); return showMenu(ctx); }
+//     if (data === 'cancel') { clearState(ctx); await ctx.deleteMessage().catch(() => {}); return showMenu(ctx); }
+//     if (data === 'cancel_sale') { clearState(ctx); await ctx.deleteMessage().catch(() => {}); return showMenu(ctx); }
+//     if (data === 'warehouse') return showWarehouse(ctx);
+//     if (data === 'customers') return showCustomers(ctx);
+//     if (data === 'settings') return showSettings(ctx);
+//     if (data === 'home_panel') return showAdminPanel(ctx);
+//     if (data === 'allsales') return showAllSales(ctx);
+//     if (data === 'set_workers') return showWorkers(ctx);
+//     if (data === 'set_backup') return showBackupMenu(ctx);
+//     if (data === 'backup_list') return showBackupList(ctx);
+//     if (data === 'backup_create') return createBackupNow(ctx);
+
+//     // === OMBOR ===
+//     if (data.startsWith('prod_') && !data.startsWith('prodin_') && !data.startsWith('prodsales_') && !data.startsWith('prodmove_') && !data.startsWith('prodedit_') && !data.startsWith('prodarchive_')) {
+//       const pid = data.substring(5);
+//       return showProductDetail(ctx, pid);
+//     }
+//     if (data.startsWith('prodin_')) {
+//       const pid = data.substring(7);
+//       const movements = DB.stockMovements.filter(m => m.productId === pid && m.type === 'in').sort((a, b) => b.date.localeCompare(a.date)).slice(0, 15);
+//       const product = DB.products.find(p => p.id === pid);
+//       if (movements.length === 0) return ctx.answerCbQuery('Kirim yo\'q.');
+//       let msg = `📥 ${product?.name} ${product?.type} - KIRIMLAR\n\n`;
+//       movements.forEach(m => {
+//         const u = DB.users.find(u => u.id === m.userId);
+//         msg += `${prettyDateTime(m.date)}\n+${fmtNum(m.quantity)} metr\n${u?.name || '?'}\n\n`;
+//       });
+//       return ctx.editMessageText(msg, inlineBack(`prod_${pid}`));
+//     }
+//     if (data.startsWith('prodsales_')) {
+//       const pid = data.substring(10);
+//       const sales = DB.sales.filter(s => s.productId === pid && s.status === 'active').sort((a, b) => b.date.localeCompare(a.date)).slice(0, 15);
+//       const product = DB.products.find(p => p.id === pid);
+//       if (sales.length === 0) return ctx.answerCbQuery('Sotuv yo\'q.');
+//       let msg = `🛒 ${product?.name} ${product?.type} - SOTUVLAR\n\n`;
+//       sales.forEach(s => {
+//         const c = DB.customers.find(c => c.id === s.customerId);
+//         msg += `${s.id}\n${prettyDateTime(s.date)}\n${c?.name || '?'} - ${fmtNum(s.quantity)}m - ${fmtSom(s.total)}\n\n`;
+//       });
+//       return ctx.editMessageText(msg, inlineBack(`prod_${pid}`));
+//     }
+//     if (data.startsWith('prodmove_')) {
+//       const pid = data.substring(9);
+//       const movements = DB.stockMovements.filter(m => m.productId === pid).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 20);
+//       const product = DB.products.find(p => p.id === pid);
+//       if (movements.length === 0) return ctx.answerCbQuery('Harakat yo\'q.');
+//       let msg = `📊 ${product?.name} ${product?.type} - QOLDIQ HARAKATI\n\n`;
+//       movements.forEach(m => {
+//         const sign = m.type === 'in' ? '+' : (m.type === 'cancel' ? '+' : '-');
+//         const icon = m.type === 'in' ? '📥' : (m.type === 'cancel' ? '↩️' : '📤');
+//         msg += `${prettyDateTime(m.date)}\n${icon} ${sign}${fmtNum(m.quantity)} metr\n${m.note || ''}\n\n`;
+//       });
+//       return ctx.editMessageText(msg, inlineBack(`prod_${pid}`));
+//     }
+//     if (data.startsWith('prodedit_')) {
+//       const pid = data.substring(9);
+//       const product = DB.products.find(p => p.id === pid);
+//       if (!product) return ctx.answerCbQuery('Topilmadi.');
+//       const buttons = [
+//         [Markup.button.callback('✏️ Nomi', `epname_${pid}`), Markup.button.callback('✏️ Turi', `eptype_${pid}`)],
+//         [Markup.button.callback('✏️ Narxi', `epprice_${pid}`), Markup.button.callback('✏️ Minimal qoldiq', `epmin_${pid}`)],
+//         [Markup.button.callback('⬅️ Orqaga', `prod_${pid}`)],
+//       ];
+//       return ctx.editMessageText(`✏️ ${product.name} ${product.type}\n\nNimani tahrirlaysiz?`, Markup.inlineKeyboard(buttons));
+//     }
+//     if (data.startsWith('epname_')) {
+//       const pid = data.substring(6);
+//       setState(ctx, { step: 'edit_product_name', editProductId: pid });
+//       const p = DB.products.find(p => p.id === pid);
+//       return ctx.editMessageText(`✏️ Nomi:\n\nJoriy: ${p.name}`, Markup.inlineKeyboard([[Markup.button.callback('❌ Bekor qilish', `prodedit_${pid}`)]]));
+//     }
+//     if (data.startsWith('eptype_')) {
+//       const pid = data.substring(6);
+//       setState(ctx, { step: 'edit_product_type', editProductId: pid });
+//       const p = DB.products.find(p => p.id === pid);
+//       return ctx.editMessageText(`✏️ Turi:\n\nJoriy: ${p.type}`, Markup.inlineKeyboard([[Markup.button.callback('❌ Bekor qilish', `prodedit_${pid}`)]]));
+//     }
+//     if (data.startsWith('epprice_')) {
+//       const pid = data.substring(7);
+//       setState(ctx, { step: 'edit_product_price', editProductId: pid });
+//       const p = DB.products.find(p => p.id === pid);
+//       return ctx.editMessageText(`✏️ Narxi:\n\nJoriy: ${fmtNum(p.unitPrice)} so'm`, Markup.inlineKeyboard([[Markup.button.callback('❌ Bekor qilish', `prodedit_${pid}`)]]));
+//     }
+//     if (data.startsWith('epmin_')) {
+//       const pid = data.substring(6);
+//       setState(ctx, { step: 'edit_product_minstock', editProductId: pid });
+//       const p = DB.products.find(p => p.id === pid);
+//       return ctx.editMessageText(`✏️ Minimal qoldiq:\n\nJoriy: ${fmtNum(p.minStock)} metr`, Markup.inlineKeyboard([[Markup.button.callback('❌ Bekor qilish', `prodedit_${pid}`)]]));
+//     }
+//     if (data.startsWith('prodarchive_')) {
+//       const pid = data.substring(12);
+//       const product = DB.products.find(p => p.id === pid);
+//       if (!product) return ctx.answerCbQuery('Topilmadi.');
+//       setState(ctx, { archiveProductId: pid });
+//       return ctx.editMessageText(
+//         `⚠️ Rostdan ham arxivlaysizmi?\n\n🏭 ${product.name} ${product.type}\n\nArxivlangan mahsulot sotuvga chiqmaydi, lekin eski sotuvlar buzilmaydi.`,
+//         Markup.inlineKeyboard([
+//           [Markup.button.callback('✅ Ha, arxivlash', `prodarchiveyes_${pid}`)],
+//           [Markup.button.callback('❌ Yo\'q', `prod_${pid}`)],
+//         ])
+//       );
+//     }
+//     if (data.startsWith('prodarchiveyes_')) {
+//       const pid = data.substring(15);
+//       const product = DB.products.find(p => p.id === pid);
+//       if (!product) return ctx.answerCbQuery('Topilmadi.');
+//       product.status = 'archived';
+//       save();
+//       auditLog(getUser(ctx).id, 'Mahsulot arxivlandi', pid, 'active', 'archived');
+//       clearState(ctx);
+//       return ctx.editMessageText(`✅ Mahsulot arxivlandi.\n\n🏭 ${product.name} ${product.type}`, inlineBack('warehouse'));
+//     }
+
+//     // === SOTUV ===
+//     if (data.startsWith('salecust_')) {
+//       const cid = data.substring(9);
+//       return saleSelectProduct(ctx, cid);
+//     }
+//     if (data === 'sale_new_customer') return saleNewCustomer(ctx);
+//     if (data.startsWith('saleprod_')) {
+//       const pid = data.substring(9);
+//       return saleEnterQuantity(ctx, pid);
+//     }
+//     if (data === 'saleproc_yes') {
+//       setState(ctx, { saleProcessing: true });
+//       return saleSelectPayment(ctx);
+//     }
+//     if (data === 'saleproc_no') {
+//       setState(ctx, { saleProcessing: false });
+//       return saleSelectPayment(ctx);
+//     }
+//     if (data === 'paycash') return confirmSale(ctx, 'cash', null);
+//     if (data === 'paycard') return confirmSale(ctx, 'card', null);
+//     if (data === 'paydebt') return confirmSale(ctx, 'debt', null);
+//     if (data === 'paymixed') return saleMixedCash(ctx);
+
+//     // === PDF ===
+//     if (data.startsWith('getpdf_')) {
+//       const sid = data.substring(7);
+//       return sendReceipt(ctx, sid);
+//     }
+//     if (data.startsWith('dailypdf_')) {
+//       const dateStr = data.substring(9);
+//       const report = generateDailyReportData(dateStr);
+//       try {
+//         const filepath = await generateDailyReport(report, dateStr, DB.settings);
+//         await ctx.replyWithDocument({ source: filepath, filename: `daily_report_${dateStr}.pdf` });
+//         return ctx.answerCbQuery('Hisobot yuborildi.');
+//       } catch (e) {
+//         return ctx.answerCbQuery('PDF xatolik.');
+//       }
+//     }
+//     if (data.startsWith('monthlypdf_')) {
+//       const mStr = data.substring(11);
+//       const report = generateMonthlyReportData(mStr);
+//       try {
+//         const filepath = await generateMonthlyReport(report, mStr, DB.settings);
+//         await ctx.replyWithDocument({ source: filepath, filename: `monthly_report_${mStr}.pdf` });
+//         return ctx.answerCbQuery('Hisobot yuborildi.');
+//       } catch (e) {
+//         return ctx.answerCbQuery('PDF xatolik.');
+//       }
+//     }
+
+//     // === MIJOZLAR ===
+//     if (data === 'newcustomer') return newCustomerStart(ctx);
+//     if (data.startsWith('cust_') && !data.startsWith('custdebt_') && !data.startsWith('custsales_') && !data.startsWith('custpay_') && !data.startsWith('custadddebt_') && !data.startsWith('custedit_') && !data.startsWith('custarchive_')) {
+//       const cid = data.substring(5);
+//       return showCustomerDetail(ctx, cid);
+//     }
+//     if (data.startsWith('custdebt_')) {
+//       const cid = data.substring(9);
+//       return showDebtHistory(ctx, cid);
+//     }
+//     if (data.startsWith('custsales_')) {
+//       const cid = data.substring(10);
+//       const sales = DB.sales.filter(s => s.customerId === cid && s.status === 'active').sort((a, b) => b.date.localeCompare(a.date));
+//       const c = DB.customers.find(c => c.id === cid);
+//       if (sales.length === 0) return ctx.answerCbQuery('Sotuv yo\'q.');
+//       let msg = `🛒 ${c?.name} - SOTUVLARI\n\n`;
+//       sales.forEach(s => {
+//         const p = DB.products.find(p => p.id === s.productId);
+//         msg += `${s.id}\n${prettyDateTime(s.date)}\n${p?.name || '?'} ${p?.type || ''} - ${fmtNum(s.quantity)}m\n${fmtSom(s.total)}\n\n`;
+//       });
+//       return ctx.editMessageText(msg, inlineBack(`cust_${cid}`));
+//     }
+//     if (data.startsWith('custpay_')) {
+//       const cid = data.substring(8);
+//       return payDebtStart(ctx, cid);
+//     }
+//     if (data.startsWith('custadddebt_')) {
+//       const cid = data.substring(12);
+//       return addDebtStart(ctx, cid);
+//     }
+//     if (data.startsWith('custedit_')) {
+//       const cid = data.substring(9);
+//       const c = DB.customers.find(c => c.id === cid);
+//       if (!c) return ctx.answerCbQuery('Topilmadi.');
+//       const buttons = [
+//         [Markup.button.callback('✏️ Ismi', `ecname_${cid}`), Markup.button.callback('✏️ Telefoni', `ecphone_${cid}`)],
+//         [Markup.button.callback('⬅️ Orqaga', `cust_${cid}`)],
+//       ];
+//       return ctx.editMessageText(`✏️ ${c.name}\n\nNimani tahrirlaysiz?`, Markup.inlineKeyboard(buttons));
+//     }
+//     if (data.startsWith('ecname_')) {
+//       const cid = data.substring(6);
+//       setState(ctx, { step: 'edit_customer_name', editCustomerId: cid });
+//       return ctx.editMessageText('✏️ Yangi ism:', Markup.inlineKeyboard([[Markup.button.callback('❌ Bekor qilish', `custedit_${cid}`)]]));
+//     }
+//     if (data.startsWith('ecphone_')) {
+//       const cid = data.substring(7);
+//       setState(ctx, { step: 'edit_customer_phone', editCustomerId: cid });
+//       return ctx.editMessageText('✏️ Yangi telefon:\n\nYoki "-" bo\'sh qilish uchun:', Markup.inlineKeyboard([[Markup.button.callback('❌ Bekor qilish', `custedit_${cid}`)]]));
+//     }
+//     if (data.startsWith('custarchive_')) {
+//       const cid = data.substring(12);
+//       const c = DB.customers.find(c => c.id === cid);
+//       if (!c) return ctx.answerCbQuery('Topilmadi.');
+//       const debt = getCustomerDebt(cid);
+//       if (debt > 0) return ctx.answerCbQuery('Mijozda qarz bor! Avval qarzni yeching.');
+//       setState(ctx, { archiveCustomerId: cid });
+//       return ctx.editMessageText(
+//         `⚠️ Rostdan ham arxivlaysizmi?\n\n👤 ${c.name}\nID: ${c.id}\n\nBu amal tarixga ta'sir qilishi mumkin.`,
+//         Markup.inlineKeyboard([
+//           [Markup.button.callback('🗑 Ha, arxivlash', `custarchiveyes_${cid}`)],
+//           [Markup.button.callback('❌ Yo\'q', `cust_${cid}`)],
+//         ])
+//       );
+//     }
+//     if (data.startsWith('custarchiveyes_')) {
+//       const cid = data.substring(15);
+//       const c = DB.customers.find(c => c.id === cid);
+//       if (!c) return ctx.answerCbQuery('Topilmadi.');
+//       c.status = 'archived';
+//       save();
+//       auditLog(getUser(ctx).id, 'Mijoz arxivlandi', cid, 'active', 'archived');
+//       clearState(ctx);
+//       return ctx.editMessageText(`✅ Mijoz arxivlandi.\n\n👤 ${c.name}`, inlineBack('customers'));
+//     }
+
+//     // === TUNKA KIRIMI ===
+//     if (data.startsWith('stockin_') && !data.includes('new')) {
+//       const pid = data.substring(8);
+//       return stockInForProduct(ctx, pid);
+//     }
+//     if (data === 'stockin_new') return newProductStart(ctx);
+
+//     // === PUL KIRIMI ===
+//     if (data === 'incsrc_qarz') {
+//       setState(ctx, { step: 'income_select_customer', incomeSource: 'Qarz to\'lovi' });
+//       const customers = DB.customers.filter(c => c.status === 'active');
+//       if (customers.length === 0) return ctx.answerCbQuery('Mijoz yo\'q.');
+//       const buttons = customers.slice(0, 20).map(c => [Markup.button.callback(`👤 ${c.name}`, `incust_${c.id}`)]);
+//       buttons.push([Markup.button.callback('❌ Bekor qilish', 'cancel')]);
+//       return ctx.editMessageText('👤 Mijozni tanlang:', Markup.inlineKeyboard(buttons));
+//     }
+//     if (data === 'incsrc_other') {
+//       setState(ctx, { step: 'income_note', incomeSource: 'Boshqa' });
+//       return ctx.editMessageText('📝 Izoh:\n\nYoki "-" yozing:', Markup.inlineKeyboard([[Markup.button.callback('❌ Bekor qilish', 'cancel')]]));
+//     }
+//     if (data.startsWith('incust_')) {
+//       const cid = data.substring(7);
+//       setState(ctx, { step: 'income_amount', incomeSource: 'Qarz to\'lovi', incomeCustomerId: cid });
+//       const c = DB.customers.find(c => c.id === cid);
+//       return ctx.editMessageText(`👤 ${c?.name}\n\n💰 Summa:\n\nMasalan: 500000`, Markup.inlineKeyboard([[Markup.button.callback('❌ Bekor qilish', 'cancel')]]));
+//     }
+
+//     // === CHIQIM ===
+//     if (data.startsWith('exptype_')) {
+//       const typeMap = { transport: 'Transport', worker: 'Ishchi haqi', rent: 'Ijara', repair: 'Ta\'mirlash', other: 'Boshqa' };
+//       const type = typeMap[data.substring(8)];
+//       setState(ctx, { step: 'expense_note', expenseType: type });
+//       return ctx.editMessageText(`📤 ${type}\n\n📝 Izoh:\n\nYoki "-" yozing:`, Markup.inlineKeyboard([[Markup.button.callback('❌ Bekor qilish', 'cancel')]]));
+//     }
+
+//     // === SOTUV DETAIL / BEKOR QILISH ===
+//     if (data.startsWith('saledetail_')) {
+//       const sid = data.substring(11);
+//       return showSaleDetail(ctx, sid);
+//     }
+//     if (data.startsWith('salecancel_')) {
+//       const sid = data.substring(11);
+//       return cancelSaleConfirm(ctx, sid);
+//     }
+//     if (data.startsWith('salecancelyes_')) {
+//       const sid = data.substring(14);
+//       return cancelSaleExecute(ctx, sid);
+//     }
+
+//     // === SOZLAMALAR ===
+//     if (data === 'set_dollar') {
+//       setState(ctx, { step: 'set_dollar_value' });
+//       return ctx.editMessageText(`💵 Dollar kursi:\n\nJoriy: 1 USD = ${fmtNum(DB.settings.dollarRate)} so'm\n\nYangi kurs:\n\nMasalan: 12500`, Markup.inlineKeyboard([[Markup.button.callback('❌ Bekor qilish', 'settings')]]));
+//     }
+//     if (data === 'set_minstock') {
+//       setState(ctx, { step: 'set_minstock_value' });
+//       return ctx.editMessageText(`⚠️ Minimal qoldiq:\n\nJoriy: ${fmtNum(DB.settings.minStock)} metr\n\nYangi qiymat:\n\nMasalan: 100`, Markup.inlineKeyboard([[Markup.button.callback('❌ Bekor qilish', 'settings')]]));
+//     }
+//     if (data === 'set_processing') {
+//       setState(ctx, { step: 'set_processing_value' });
+//       return ctx.editMessageText(`🛠 Qayta ishlash foizi:\n\nJoriy: ${DB.settings.processingPercent}%\n\nYangi foiz:\n\nMasalan: 2`, Markup.inlineKeyboard([[Markup.button.callback('❌ Bekor qilish', 'settings')]]));
+//     }
+//     if (data === 'set_orgname') {
+//       setState(ctx, { step: 'set_orgname_value' });
+//       return ctx.editMessageText(`🏭 Tashkilot nomi:\n\nJoriy: ${DB.settings.orgName}\n\nYangi nom:`, Markup.inlineKeyboard([[Markup.button.callback('❌ Bekor qilish', 'settings')]]));
+//     }
+//     if (data === 'set_phone') {
+//       setState(ctx, { step: 'set_phone_value' });
+//       return ctx.editMessageText(`📞 Telefon:\n\nJoriy: ${DB.settings.phone || '-'}\n\nYangi telefon:`, Markup.inlineKeyboard([[Markup.button.callback('❌ Bekor qilish', 'settings')]]));
+//     }
+//     if (data === 'set_address') {
+//       setState(ctx, { step: 'set_address_value' });
+//       return ctx.editMessageText(`📍 Manzil:\n\nJoriy: ${DB.settings.address || '-'}\n\nYangi manzil:`, Markup.inlineKeyboard([[Markup.button.callback('❌ Bekor qilish', 'settings')]]));
+//     }
+//     if (data === 'set_receipt') {
+//       setState(ctx, { step: 'set_receipt_footer' });
+//       return ctx.editMessageText(`🧾 Chek matni (footer):\n\nJoriy: ${DB.settings.receiptFooter}\n\nYangi matn:`, Markup.inlineKeyboard([[Markup.button.callback('❌ Bekor qilish', 'settings')]]));
+//     }
+
+//     // === ADMIN PANEL ===
+//     if (data === 'admin_addprod') return newProductStart(ctx);
+//     if (data === 'admin_audit') return showAuditLog(ctx);
+//     if (data === 'admin_backup') return createBackupNow(ctx);
+
+//     // === ISHCHILAR ===
+//     if (data === 'addworker') return addWorkerStart(ctx);
+//     if (data.startsWith('worker_') && !data.startsWith('workertoggle_') && !data.startsWith('workeredit_') && !data.startsWith('workerdelete_')) {
+//       const wid = data.substring(7);
+//       return showWorkerDetail(ctx, wid);
+//     }
+//     if (data.startsWith('workertoggle_')) {
+//       const wid = data.substring(13);
+//       const worker = DB.users.find(u => u.id === wid);
+//       if (!worker) return ctx.answerCbQuery('Topilmadi.');
+//       worker.active = !worker.active;
+//       save();
+//       auditLog(getUser(ctx).id, 'Ishchi holati o\'zgartirildi', wid, !worker.active, worker.active);
+//       return showWorkerDetail(ctx, wid);
+//     }
+//     if (data.startsWith('workeredit_')) {
+//       const wid = data.substring(11);
+//       setState(ctx, { step: 'edit_worker_name', editWorkerId: wid });
+//       const w = DB.users.find(u => u.id === wid);
+//       return ctx.editMessageText(`✏️ ${w?.name}\n\nYangi ism:`, Markup.inlineKeyboard([[Markup.button.callback('❌ Bekor qilish', `worker_${wid}`)]]));
+//     }
+//     if (data.startsWith('workerdelete_')) {
+//       const wid = data.substring(13);
+//       const worker = DB.users.find(u => u.id === wid);
+//       if (!worker) return ctx.answerCbQuery('Topilmadi.');
+//       setState(ctx, { deleteWorkerId: wid });
+//       return ctx.editMessageText(
+//         `⚠️ Rostdan ham o'chirmoqchimisiz?\n\n👤 ${worker.name}\nTelegram ID: ${worker.telegramId}`,
+//         Markup.inlineKeyboard([
+//           [Markup.button.callback('🗑 Ha, o\'chirish', `workerdeleteyes_${wid}`)],
+//           [Markup.button.callback('❌ Yo\'q', `worker_${wid}`)],
+//         ])
+//       );
+//     }
+//     if (data.startsWith('workerdeleteyes_')) {
+//       const wid = data.substring(16);
+//       const idx = DB.users.findIndex(u => u.id === wid);
+//       if (idx === -1) return ctx.answerCbQuery('Topilmadi.');
+//       const name = DB.users[idx].name;
+//       DB.users.splice(idx, 1);
+//       save();
+//       auditLog(getUser(ctx).id, 'Ishchi o\'chirildi', wid, name, '');
+//       clearState(ctx);
+//       return ctx.editMessageText(`✅ Ishchi o'chirildi.\n\n👤 ${name}`, inlineBack('set_workers'));
+//     }
+
+//     // === BACKUP RESTORE ===
+//     if (data.startsWith('backuprestore_') && !data.startsWith('backuprestoreyes_')) {
+//       const filename = data.substring(14);
+//       return confirmRestoreBackup(ctx, filename);
+//     }
+//     if (data.startsWith('backuprestoreyes_')) {
+//       const filename = data.substring(17);
+//       return restoreBackupNow(ctx, filename);
+//     }
+
+//     return ctx.answerCbQuery('Tanilmadi.');
+//   } catch (e) {
+//     console.error('Callback handler xatolik:', e.message);
+//     return ctx.answerCbQuery('Xatolik yuz berdi.');
+//   }
+// });
+
+// // ============================================================
+// // GLOBAL ERROR HANDLING
+// // ============================================================
+
+// bot.catch((err, ctx) => {
+//   console.error('Global xatolik:', err.message);
+//   try {
+//     ctx.reply('❌ Xatolik yuz berdi. Iltimos, qaytadan urinib ko\'ring.');
+//   } catch {}
+//   if (PRIVATE_GROUP_ID) {
+//     sendToGroup(`❌ TEXNIK XATO\n\n${err.message}\nSana: ${prettyDateTime(nowStr())}`);
+//   }
+// });
+
+// process.on('unhandledRejection', (reason) => {
+//   console.error('Unhandled Rejection:', reason);
+// });
+
+// process.on('uncaughtException', (err) => {
+//   console.error('Uncaught Exception:', err.message);
+// });
+
+// // ============================================================
+// // BOTNI ISHGA TUSHIRISH
+// // ============================================================
+
+// async function startup() {
+//   console.log('🏭 TUNKA HISOB BOTI');
+//   console.log('✅ Bot ishga tushdi');
+//   console.log('🗄 JSON baza yuklandi');
+//   console.log(`🕐 Timezone: Asia/Samarkand`);
+//   console.log('👑 Admin tizimi tayyor');
+//   console.log('👥 Ishchilar tizimi tayyor');
+//   console.log('📦 Ombor tizimi tayyor');
+//   console.log('🛒 Sotuv tizimi tayyor');
+//   console.log('🔴 Nasiya tizimi tayyor');
+//   console.log('📊 Hisobot tizimi tayyor');
+//   console.log('🧾 PDF tizimi tayyor');
+//   console.log('💾 Backup tizimi tayyor');
+
+//   // Adminni ro'yxatdan o'tkazish
+//   let admin = DB.users.find(u => u.role === 'admin');
+//   if (!admin) {
+//     DB.users.push({
+//       id: 'USR-00001',
+//       role: 'admin',
+//       telegramId: ADMIN_ID,
+//       name: 'ADMIN',
+//       active: true,
+//     });
+//     DB.counters.user = 1;
+//     save();
+//   } else if (admin.telegramId !== ADMIN_ID) {
+//     admin.telegramId = ADMIN_ID;
+//     save();
+//   }
+
+//   // Kunlik avtomatik backup (har 24 soatda)
+//   let lastBackupDate = todayStr();
+//   setInterval(() => {
+//     const today = todayStr();
+//     if (today !== lastBackupDate) {
+//       const result = createBackup(DB);
+//       if (result) {
+//         const bId = nextId('BKP');
+//         DB.backups.push({ id: bId, filename: result.filename, date: result.date, size: result.size });
+//         save();
+//         if (PRIVATE_GROUP_ID) {
+//           bot.telegram.sendDocument(PRIVATE_GROUP_ID, {
+//             source: result.filepath,
+//             filename: result.filename,
+//           }).catch(() => {});
+//         }
+//       }
+//       lastBackupDate = today;
+//     }
+//   }, 3600000); // Har soatda tekshirish
+
+//   bot.launch().then(() => {
+//     console.log('\n🚀 Bot to\'liq ishlamoqda...');
+//   }).catch(e => {
+//     console.error('❌ Bot ishga tushmadi:', e.message);
+//     process.exit(1);
+//   });
+// }
+
+// // Graceful shutdown
+// process.once('SIGINT', () => bot.stop('SIGINT'));
+// process.once('SIGTERM', () => bot.stop('SIGTERM'));
+
+// startup();
+//////////////////////////////////////////////////////////////////////////////
+

@@ -17,18 +17,19 @@ function defaultData() {
       address: '',
       dollarRate: 12500,
       minStock: 100,
-      processingPercent: 2,
+      servicePrice: 2000,
       timezone: 'Asia/Samarkand',
       receiptFooter: 'Rahmat!',
     },
     users: [],        // { id, role, telegramId, name, active }
     customers: [],    // { id, name, phone, note, telegramId, createdAt, status }
-    products: [],     // { id, name, type, color, unitPrice, minStock, status, createdAt }
+    products: [],     // { id, category, unit, name, type, color, unitPrice, minStock, status, createdAt }
+    saleMenuProducts: [], // { id, productId, createdAt }
     stock: [],        // { productId, quantity }
-    stockMovements: [], // { id, productId, type: 'in'|'out'|'cancel', quantity, rollId, note, userId, date }
+    stockMovements: [], // Includes unit, before/after quantity, valuation, batch number and linked sale when available.
     rolls: [],        // { id, productId, rollNumber, quantity, remaining, unitPrice, date, note }
-    sales: [],        // { id, customerId, productId, quantity, unitPrice, processingApplied, processingPercent, total, paid, debt, paymentType, mixedPayments, exchangeRate, usdAmount, userId, date, status, cancelledBy, cancelledAt, cancelReason }
-    payments: [],     // { id, customerId, saleId, amount, prevDebt, remaining, method, userId, date }
+    sales: [],        // Legacy single-line fields remain; new sales include immutable item lines and price/unit snapshots.
+    payments: [],     // Includes method and optional debt allocations for FIFO, per-debt settlement.
     debts: [],        // { id, customerId, saleId, amount, reason, userId, date, status }
     income: [],       // { id, source, customerId, amount, note, userId, date }
     expenses: [],     // { id, type, amount, note, userId, date }
@@ -203,6 +204,7 @@ module.exports = {
   listBackups,
   readBackupFile,
   defaultData,
+  mergeDefaults,
   restoreFromLatestBackup,
   DATA_FILE,
   BACKUP_DIR,
